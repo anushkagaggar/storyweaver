@@ -6,7 +6,9 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.54",
-    "gradio>=5.0",
+    # HF Gradio Spaces always install gradio[oauth,mcp]; declaring the extras keeps uv.lock consistent with
+    # what the Space resolves (e.g. the mcp extra caps pydantic).
+    "gradio[oauth,mcp]>=5.0",
     "spaces>=0.51",
     "pydantic-settings>=2.15",
     "groq>=1.7",

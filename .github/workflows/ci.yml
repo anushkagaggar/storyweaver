@@ -27,6 +27,17 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run mypy
       - run: uv run pytest -m unit
+      # HF Gradio Spaces install our requirements.txt together with gradio[oauth,mcp], spaces and a torch cap.
+      # Resolve that exact set for the Space's platform so conflicts fail here, not in the Space build.
+      - name: Check the Space can install our requirements
+        run: |
+          uv export --frozen --no-dev --extra gpu --no-emit-project --no-hashes -o /tmp/space-req.txt
+          GRADIO=$(grep -oP '^gradio==\K[^\s;]+' /tmp/space-req.txt)
+          SPACES=$(grep -oP '^spaces==\K[^\s;]+' /tmp/space-req.txt)
+          printf '%s\n' "torch<=2.13.0" "gradio[oauth,mcp]==$GRADIO" "uvicorn>=0.14.0" "websockets>=10.4" \
+            "spaces==$SPACES" >> /tmp/space-req.txt
+          uv pip compile --quiet --python-platform x86_64-unknown-linux-gnu --python-version 3.12 \
+            /tmp/space-req.txt -o /dev/null
 
   frontend:
     runs-on: ubuntu-latest
