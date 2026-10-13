@@ -1,0 +1,48 @@
+:root {
+  --bg: #fffdf8;
+  --fg: #1f1b2e;
+  --ok: #1b7f4b;
+  --fail: #b42318;
+  --muted: #6b6780;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #15131d;
+    --fg: #eeeaf7;
+    --ok: #4ade80;
+    --fail: #f87171;
+    --muted: #a19db3;
+  }
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: system-ui, sans-serif;
+}
+
+main {
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+}
+
+.checks {
+  list-style: none;
+  padding: 0;
+}
+
+.checks li {
+  margin-bottom: 0.75rem;
+}
+
+.checks .ok strong { color: var(--ok); }
+.checks .fail strong { color: var(--fail); }
+.checks .pending strong { color: var(--muted); }
+
+pre {
+  white-space: pre-wrap;
+  font-size: 0.8rem;
+}

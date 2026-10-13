@@ -1,0 +1,67 @@
+[project]
+name = "storyweaver-backend"
+version = "0.0.1"
+description = "StoryWeaver API: FastAPI + Gradio on a Hugging Face ZeroGPU Space"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.54",
+    "gradio>=5.0",
+    "spaces>=0.51",
+    "pydantic-settings>=2.15",
+    "groq>=1.7",
+]
+
+[project.optional-dependencies]
+# ZeroGPU supports torch 2.8.0–2.13.0 (HF docs, checked 13 Oct 2026). On Windows, PyPI torch is CPU-only;
+# use the Docker image for local GPU work.
+gpu = ["torch==2.13.0"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1",
+    "pytest-asyncio>=1.4",
+    "respx>=0.23",
+    "httpx>=0.28",
+    "ruff>=0.12",
+    "mypy>=1.15",
+]
+
+[tool.uv]
+# The Space runs app.py from source, so the project itself is not installed as a package.
+package = false
+# Supply-chain guard: only resolve releases at least two weeks old. Move this date forward deliberately.
+exclude-newer = "2026-09-29T00:00:00Z"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "unit: fast, isolated tests with no external services",
+    "integration: tests against local Postgres/Redis/MinIO",
+    "contract: schema and OpenAPI contract tests",
+    "live: calls real external APIs (opt-in)",
+]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "ASYNC", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106"]
+"app.py" = ["S104"]
+
+[tool.mypy]
+python_version = "3.12"
+mypy_path = "src"
+strict = true
+packages = ["storyweaver"]
+
+[[tool.mypy.overrides]]
+module = ["spaces", "spaces.*", "torch", "torch.*"]
+ignore_missing_imports = true
