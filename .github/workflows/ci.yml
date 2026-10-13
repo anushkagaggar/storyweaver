@@ -37,7 +37,7 @@ jobs:
           printf '%s\n' "torch<=2.13.0" "gradio[oauth,mcp]==$GRADIO" "uvicorn>=0.14.0" "websockets>=10.4" \
             "spaces==$SPACES" >> /tmp/space-req.txt
           uv pip compile --quiet --python-platform x86_64-unknown-linux-gnu --python-version 3.12 \
-            /tmp/space-req.txt -o /dev/null
+            /tmp/space-req.txt -o /tmp/space-resolved.txt
 
   frontend:
     runs-on: ubuntu-latest
