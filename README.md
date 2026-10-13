@@ -13,6 +13,9 @@ cd ..\frontend; copy .env.example .env.local; npm install; npm run dev   # http:
 
 # Full local stack (GPU API, web, postgres, redis, SeaweedFS S3):
 docker compose -f infra/docker-compose.yml --env-file .env up --build
+
+# With the stack running, smoke-test it (Git Bash; run before every release):
+bash scripts/local_smoke.sh .env
 ```
 
 ## Deployment

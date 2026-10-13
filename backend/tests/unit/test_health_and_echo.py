@@ -41,6 +41,19 @@ def test_valid_incoming_request_id_is_propagated(client: TestClient) -> None:
     assert response.headers["X-Request-ID"] == "abc-123"
 
 
+def test_docs_and_schema_hidden_in_prod(monkeypatch: pytest.MonkeyPatch) -> None:
+    from storyweaver.api.main import create_app
+    from storyweaver.config import get_settings
+
+    monkeypatch.setenv("APP_ENV", "prod")
+    get_settings.cache_clear()
+
+    with TestClient(create_app()) as prod_client:
+        assert prod_client.get("/docs").status_code == 404
+        assert prod_client.get("/openapi.json").status_code == 404
+        assert prod_client.get("/health/live").status_code == 200
+
+
 def test_malformed_incoming_request_id_is_replaced(client: TestClient) -> None:
     response = client.get("/health/live", headers={"X-Request-ID": "bad id\twith spaces"})
 

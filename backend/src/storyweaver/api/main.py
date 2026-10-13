@@ -14,11 +14,13 @@ def create_app() -> FastAPI:
     settings = get_settings()
     logging.basicConfig(level=settings.log_level, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
+    is_local = settings.app_env == "local"
     app = FastAPI(
         title="StoryWeaver API",
         version=__version__,
-        # Interactive docs only locally; the production API is called by the Vercel server only.
-        docs_url="/docs" if settings.app_env == "local" else None,
+        # Schema and interactive docs only locally; the production API is called by the Vercel server only.
+        openapi_url="/openapi.json" if is_local else None,
+        docs_url="/docs" if is_local else None,
         redoc_url=None,
     )
 
