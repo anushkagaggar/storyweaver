@@ -13,6 +13,8 @@ os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 import gradio as gr
 import uvicorn
 
+# ZeroGPU refuses to start unless at least one @spaces.GPU function is imported at startup.
+import storyweaver.diagnostics  # noqa: F401
 from storyweaver.api.main import create_app
 from storyweaver.ui import build_demo
 
