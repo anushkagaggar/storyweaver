@@ -12,6 +12,7 @@ from storyweaver.adapters.groq_llm import GroqLLM
 from storyweaver.config import Settings
 from storyweaver.jobs.worker import Worker
 from storyweaver.llm.planner import StoryPlanner
+from storyweaver.observability.tracing import NoopTracer, Tracer
 from storyweaver.orchestrator.story_service import PlanStoryJob, StoryService, make_story_failure_hook
 from storyweaver.routing.llm import RoutedLLM
 from storyweaver.routing.router import ModelRouter
@@ -31,6 +32,7 @@ class Services:
     groq: AsyncGroq | None = None
     stories: StoryService | None = None
     worker: Worker | None = None
+    tracer: Tracer = field(default_factory=NoopTracer)
     _worker_task: asyncio.Task[None] | None = field(default=None, repr=False)
     _stop: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
 
@@ -42,6 +44,7 @@ class Services:
         self._stop.set()
         if self._worker_task is not None:
             await self._worker_task
+        self.tracer.shutdown()
         if self.groq is not None:
             await self.groq.close()
         if self.redis is not None:
@@ -73,10 +76,12 @@ def build_services(settings: Settings) -> Services:
         services.stories = StoryService(services.sessions, input_guard=None)
         return services
 
+    services.tracer = build_tracer(settings)
     services.groq = AsyncGroq(api_key=settings.groq_api_key.get_secret_value(), max_retries=0, timeout=120.0)
     llm = RoutedLLM(
         GroqLLM(services.groq, reasoning_effort=settings.planner_reasoning_effort),
         ModelRouter(store, margin=settings.quota_safety_margin),
+        tracer=services.tracer,
     )
     guard_models = GuardModels(
         prompt_guard=settings.prompt_guard_model,
@@ -99,3 +104,24 @@ def build_services(settings: Settings) -> Services:
             on_final_failure=make_story_failure_hook(services.sessions),
         )
     return services
+
+
+def build_tracer(settings: Settings) -> Tracer:
+    """Langfuse when both keys are set; otherwise a tracer that records nothing."""
+    if not settings.tracing_enabled:
+        return NoopTracer()
+    from storyweaver.adapters.langfuse_tracer import LangfuseTracer  # imported only when tracing is on
+
+    assert settings.langfuse_public_key is not None and settings.langfuse_secret_key is not None  # noqa: S101
+    logger.info(
+        "Langfuse tracing on (host=%s, content capture=%s).",
+        settings.langfuse_host,
+        settings.langfuse_capture_content,
+    )
+    return LangfuseTracer(
+        public_key=settings.langfuse_public_key.get_secret_value(),
+        secret_key=settings.langfuse_secret_key.get_secret_value(),
+        host=settings.langfuse_host,
+        capture_content=settings.langfuse_capture_content,
+        environment=settings.app_env,
+    )

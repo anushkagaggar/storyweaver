@@ -36,13 +36,19 @@ class Settings(BaseSettings):
     prompt_guard_model: str = "meta-llama/llama-prompt-guard-2-22m"
     safeguard_model: str = "openai/gpt-oss-safeguard-20b"
     prompt_guard_threshold: float = Field(default=0.5, gt=0, lt=1)
+    # Langfuse tracing (plan V1): off unless both keys are set. Prompts and story text are sent only when
+    # LANGFUSE_CAPTURE_CONTENT=true; by default traces carry metadata only (privacy by design).
+    langfuse_public_key: SecretStr | None = None
+    langfuse_secret_key: SecretStr | None = None
+    langfuse_host: str = "https://cloud.langfuse.com"
+    langfuse_capture_content: bool = False
     # Run the in-process job worker (disabled in tests, which drive the worker directly).
     worker_enabled: bool = True
 
     # Comma-separated list of origins allowed by CORS.
     allowed_origins: str = "http://localhost:3000"
 
-    @field_validator("groq_api_key", mode="before")
+    @field_validator("groq_api_key", "langfuse_public_key", "langfuse_secret_key", mode="before")
     @classmethod
     def _blank_key_is_unset(cls, value: object) -> object:
         return None if isinstance(value, str) and not value.strip() else value
@@ -50,6 +56,10 @@ class Settings(BaseSettings):
     @property
     def allowed_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.allowed_origins.split(",") if origin.strip()]
+
+    @property
+    def tracing_enabled(self) -> bool:
+        return self.langfuse_public_key is not None and self.langfuse_secret_key is not None
 
     @property
     def planner_model_id(self) -> str:

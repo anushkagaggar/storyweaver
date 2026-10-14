@@ -26,6 +26,7 @@ from storyweaver.jobs.worker import (
 )
 from storyweaver.llm.client import LLMError, LLMRateLimitedError
 from storyweaver.llm.planner import PlanningError, StoryPlanner, StoryRequest
+from storyweaver.observability.tracing import trace_scope
 from storyweaver.routing.router import QuotaExhaustedError
 from storyweaver.safety.guards import (
     OUTPUT_REJECTED_MESSAGE,
@@ -118,7 +119,8 @@ class StoryService:
         if self._input_guard is None:
             raise SafetyUnavailableError(60, "Safety checks are not configured.")
         try:
-            verdict = await self._input_guard.check(prompt)
+            with trace_scope("story.input_check"):  # no story id yet: rejected ideas are never stored
+                verdict = await self._input_guard.check(prompt)
         except QuotaExhaustedError as exc:
             raise SafetyUnavailableError(exc.retry_after_seconds, "Safety check quota reached.") from exc
         except LLMRateLimitedError as exc:
@@ -158,8 +160,11 @@ class PlanStoryJob:
     async def __call__(self, context: JobContext) -> None:
         if context.story_id is None:
             raise PermanentJobError("invalid_job", "Plan job has no story.")
-        story_id = context.story_id
+        # One trace per attempt, grouped by story id (Langfuse session): planner, repair, output check.
+        with trace_scope("story.plan", session_id=str(context.story_id)):
+            await self._run(context, context.story_id)
 
+    async def _run(self, context: JobContext, story_id: uuid.UUID) -> None:
         async with self._sessions() as session, session.begin():
             repo = StoryRepository(session)
             row = await repo.get(story_id)
