@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     planner_max_tokens: int = 4000
     planner_temperature: float = 0.7
     planner_reasoning_effort: Literal["low", "medium", "high"] = "low"
+
+    database_url: str | None = None
+    redis_url: str | None = None
+    # Keep this fraction of each Groq free-tier limit as the usable budget (0.9 leaves 10% headroom).
+    quota_safety_margin: float = Field(default=0.9, gt=0, le=1)
 
     # Comma-separated list of origins allowed by CORS.
     allowed_origins: str = "http://localhost:3000"
