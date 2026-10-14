@@ -6,6 +6,7 @@ The REST API is mocked with respx: success, bad input and API errors per tool.
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -143,7 +144,10 @@ async def test_get_story_and_job_status() -> None:
             story.structuredContent is not None
             and story.structuredContent["title"] == "Tilly the Tiny Turtle"
         )
-        assert job.structuredContent == {"id": JOB_ID, "status": "succeeded"}
+        assert job.structuredContent is not None
+        assert job.structuredContent["status"] == "succeeded"
+        assert "get_story" in job.structuredContent["progress"]
+        assert "check_again_in_seconds" not in story.structuredContent  # ready = final
 
 
 @respx.mock
@@ -188,3 +192,33 @@ async def test_bedtime_story_prompt_guides_the_tool_flow() -> None:
         text = prompt.messages[0].content
         assert isinstance(text, TextContent)
         assert "about an otter" in text.text and "sharing" in text.text and "create_story" in text.text
+
+
+@respx.mock
+async def test_in_progress_story_explains_itself_and_says_when_to_check() -> None:
+    """Live 15 Oct 2026: Claude stopped polling a story in 'checking' because it looked stuck."""
+    async with connect() as session:
+        checking = {**STORY, "status": "checking", "title": None, "moral": None, "scenes": []}
+        respx.get(f"{API}/v1/stories/{STORY_ID}").mock(return_value=httpx.Response(200, json=checking))
+
+        result = await session.call_tool("get_story", {"story_id": STORY_ID})
+
+        content = result.structuredContent
+        assert content is not None and content["status"] == "checking"
+        assert "safety check" in content["progress"] and "Keep checking" in content["progress"]
+        assert content["check_again_in_seconds"] == 15
+
+
+@respx.mock
+async def test_quota_deferred_job_is_explained_as_normal() -> None:
+    async with connect() as session:
+        later = (datetime.now(UTC) + timedelta(seconds=30)).isoformat()
+        deferred = {"id": JOB_ID, "status": "queued", "attempts": 0, "run_after": later}
+        respx.get(f"{API}/v1/jobs/{JOB_ID}").mock(return_value=httpx.Response(200, json=deferred))
+
+        result = await session.call_tool("get_job_status", {"job_id": JOB_ID})
+
+        content = result.structuredContent
+        assert content is not None
+        assert "quota" in content["progress"] and "normal" in content["progress"]
+        assert 30 <= content["check_again_in_seconds"] <= 36
