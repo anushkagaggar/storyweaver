@@ -1,6 +1,6 @@
 # ADR-0001: Running GPU work on a ZeroGPU Space alongside a FastAPI REST API
 
-- **Status:** Accepted (14 Oct 2026). Live verification on the Space is pending; see "Live results".
+- **Status:** Accepted and verified live (14 Oct 2026, v0.0.5).
 - **Deciders:** project owner
 
 ## Context
@@ -74,14 +74,17 @@ Daily GPU quota per caller: anonymous about 2 min, free account 5 min, PRO 40 mi
 - **Errors:** `gr.Error` messages (such as an invalid API key) are shown to the caller; Gradio logs the
   traceback server-side. `show_error=False` hides unexpected exception details.
 
-## Live results (fill in after deploying)
+## Live results (v0.0.5, 14 Oct 2026)
 
 | Check | Result |
 |---|---|
-| Space reaches **Running** (no startup error) | |
-| `GET /health/live` | |
-| `GET /v1/groq-check` with `X-API-Key` | |
-| Gradio `gpu_check` with `X-API-Key` + HF token: completes, `ok: true`, device name | |
-| Gradio `gpu_check` without key: `error` | |
-| Quota charged to the HF token owner (HF settings, ZeroGPU usage) | |
-| Cold start after sleep | |
+| Space reaches **Running** on `zero-a10g` (no startup error) | ✅ Log: `POST device-api.zero/startup-report 200` |
+| `GET /health/live`, `/health/ready` | ✅ 200 |
+| `/v1/*` without key; `/docs`, `/openapi.json`; REST `/v1/gpu-check` | ✅ 401; 404; 404 |
+| Gradio `gpu_check` without key | ✅ `event: error`, "Missing or invalid API key." |
+| Gradio `gpu_check` with key + HF token | ✅ `ok: true`, NVIDIA RTX PRO 6000 Blackwell (MIG 2g.48gb), torch 2.13.0+cu130, matmul 87 ms, 2.6 s round trip |
+| Gradio `gpu_check` with key, no HF token (anonymous quota) | ✅ `ok: true`, 1.9 s round trip |
+| Quota attribution | ✅ With an HF token, the `schedule` call's token carries the HF user (container log) |
+| CORS | App-level policy works; the HF proxy adds permissive CORS on top (see Consequences) |
+| Anomaly | The first live call (with HF token) completed on the GPU (`release fail=false` 0.5 s after `schedule`), but its result never reached the client, which received only heartbeats. Not reproduced in two later calls. If it recurs, capture the container log; the frontend's 90 s timeout bounds the impact. |
+| Cold start after sleep | Not yet measured |
