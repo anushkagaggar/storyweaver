@@ -8,6 +8,7 @@ from alembic import context
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from storyweaver.storage.db import normalize_database_url
 from storyweaver.storage.models import Base
 
 config = context.config
@@ -21,7 +22,7 @@ def _database_url() -> str:
     url = config.attributes.get("database_url") or os.environ.get("DATABASE_URL")
     if not url:
         raise RuntimeError("DATABASE_URL is not set.")
-    return str(url)
+    return normalize_database_url(str(url))
 
 
 def run_migrations_offline() -> None:

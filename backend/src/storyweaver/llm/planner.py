@@ -15,7 +15,7 @@ from storyweaver.domain.story import (
     Story,
     story_problems,
 )
-from storyweaver.llm.client import ChatMessage, LLMClient, LLMResult
+from storyweaver.llm.client import ChatMessage, LLMClient, LLMInvalidOutputError, LLMResult
 from storyweaver.llm.schemas import PLANNED_STORY_SCHEMA, PlannedStory
 
 logger = logging.getLogger(__name__)
@@ -118,6 +118,14 @@ class StoryPlanner:
         )
 
     async def _call(self, model: str, messages: list[ChatMessage]) -> LLMResult:
+        try:
+            return await self._call_llm(model, messages)
+        except LLMInvalidOutputError as exc:
+            # Treated like any invalid output: it goes through the one repair call (or fails planning).
+            logger.info("Planner output failed provider JSON validation (%s); treating it as invalid.", model)
+            return LLMResult(exc.partial_output, model, 0, 0, 0.0, "invalid_output")
+
+    async def _call_llm(self, model: str, messages: list[ChatMessage]) -> LLMResult:
         result = await self._llm.complete_json(
             model=model,
             messages=messages,

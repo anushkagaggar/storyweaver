@@ -32,6 +32,15 @@ class LLMRateLimitedError(LLMError):
         self.retry_after_seconds = retry_after_seconds
 
 
+class LLMInvalidOutputError(LLMError):
+    """The provider could not produce output matching the schema (Groq: 400 json_validate_failed, even in
+    strict mode). Carries the partial generation so the caller can send it back for repair."""
+
+    def __init__(self, message: str, partial_output: str) -> None:
+        super().__init__(message)
+        self.partial_output = partial_output
+
+
 class LLMUnavailableError(LLMError):
     """Provider unreachable, 5xx, or the model was withdrawn (404)."""
 

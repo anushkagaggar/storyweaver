@@ -6,7 +6,13 @@ import respx
 from groq import AsyncGroq
 
 from storyweaver.adapters.groq_llm import GroqLLM
-from storyweaver.llm.client import ChatMessage, LLMError, LLMRateLimitedError, LLMUnavailableError
+from storyweaver.llm.client import (
+    ChatMessage,
+    LLMError,
+    LLMInvalidOutputError,
+    LLMRateLimitedError,
+    LLMUnavailableError,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -93,4 +99,39 @@ async def test_bad_request_and_truncation_are_llm_errors() -> None:
 
     respx.post(URL).mock(return_value=httpx.Response(200, json=_completion(finish_reason="length")))
     with pytest.raises(LLMError, match="truncated"):
+        await _call(_llm())
+
+
+@respx.mock
+async def test_json_validate_failed_becomes_invalid_output_with_partial_generation() -> None:
+    """Live 15 Oct 2026: strict mode still returned 400 json_validate_failed for some prompts."""
+    respx.post(URL).mock(
+        return_value=httpx.Response(
+            400,
+            json={
+                "error": {
+                    "code": "json_validate_failed",
+                    "message": "Failed to generate JSON. Please adjust your prompt.",
+                    "failed_generation": '{"title": "Half a story',
+                }
+            },
+        )
+    )
+
+    with pytest.raises(LLMInvalidOutputError) as info:
+        await _call(_llm())
+
+    assert info.value.partial_output == '{"title": "Half a story'
+    assert "json_validate_failed" in str(info.value)
+
+
+@respx.mock
+async def test_other_bad_requests_include_groqs_reason() -> None:
+    respx.post(URL).mock(
+        return_value=httpx.Response(
+            400, json={"error": {"code": "context_length_exceeded", "message": "too long"}}
+        )
+    )
+
+    with pytest.raises(LLMError, match="context_length_exceeded: too long"):
         await _call(_llm())

@@ -105,3 +105,24 @@ async def test_six_scenes_requested(planned_story: dict[str, Any]) -> None:
 
     assert len(result.story.scenes) == 6
     assert "Exactly 6 scenes" in llm.calls[0]["messages"][0].content
+
+
+async def test_provider_json_failure_goes_through_the_repair_call(planned_story: dict[str, Any]) -> None:
+    from storyweaver.llm.client import LLMInvalidOutputError
+
+    class FailsFirst(FakeLLM):
+        async def complete_json(self, **kwargs: Any) -> LLMResult:  # type: ignore[override]
+            if not self.calls:
+                self.calls.append({"model": kwargs["model"], "messages": kwargs["messages"]})
+                raise LLMInvalidOutputError("json_validate_failed", '{"title": "Half')
+            return await super().complete_json(**kwargs)
+
+    llm = FailsFirst(json.dumps(planned_story))
+
+    result = await _planner(llm).plan(StoryRequest(prompt="x"), story_key="s1")
+
+    assert result.repaired
+    assert [c["model"] for c in llm.calls] == ["planner-model", "teacher-model"]
+    repair = llm.calls[1]["messages"]
+    assert repair[2].content == '{"title": "Half'  # the partial generation is sent back for repair
+    assert "Invalid JSON" in repair[3].content

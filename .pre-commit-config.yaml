@@ -29,4 +29,5 @@ repos:
     hooks:
       - id: detect-secrets
         args: ["--baseline", ".secrets.baseline"]
-        exclude: (package-lock\.json|uv\.lock)$
+        # test_database_url.py tests connection URLs with placeholder credentials by design.
+        exclude: (package-lock\.json|uv\.lock|tests/unit/test_database_url\.py)$

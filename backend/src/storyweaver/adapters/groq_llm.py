@@ -12,6 +12,7 @@ from groq.types.chat.completion_create_params import ResponseFormatResponseForma
 from storyweaver.llm.client import (
     ChatMessage,
     LLMError,
+    LLMInvalidOutputError,
     LLMRateLimitedError,
     LLMResult,
     LLMUnavailableError,
@@ -28,6 +29,19 @@ def _retry_after_seconds(response: Any) -> float | None:
         return float(value) if value is not None else None
     except ValueError:
         return None
+
+
+def _error_body(exc: groq.APIStatusError) -> dict[str, Any]:
+    body = exc.body if isinstance(exc.body, dict) else {}
+    error = body.get("error", body)
+    return error if isinstance(error, dict) else {}
+
+
+def _error_detail(exc: groq.APIStatusError) -> str:
+    error = _error_body(exc)
+    code = error.get("code") or error.get("type") or "unknown"
+    message = str(error.get("message") or exc.message)
+    return f"{code}: {message[:300]}"
 
 
 class GroqLLM:
@@ -82,7 +96,14 @@ class GroqLLM:
         except groq.APIStatusError as exc:
             if exc.status_code >= 500:
                 raise LLMUnavailableError(f"Groq returned HTTP {exc.status_code}.") from exc
-            raise LLMError(f"Groq rejected the request (HTTP {exc.status_code}).") from exc
+            # Groq's code and message explain 4xx failures; this text goes to logs and job records only,
+            # never to end users (the API returns its own generic messages).
+            detail = _error_detail(exc)
+            if _error_body(exc).get("code") == "json_validate_failed":
+                # Seen live (15 Oct 2026) despite strict mode: hand the partial output back for repair.
+                partial = str(_error_body(exc).get("failed_generation") or "")
+                raise LLMInvalidOutputError(f"Groq could not produce valid JSON: {detail}", partial) from exc
+            raise LLMError(f"Groq rejected the request (HTTP {exc.status_code}): {detail}") from exc
         except (groq.APIConnectionError, groq.APITimeoutError) as exc:
             raise LLMUnavailableError("Could not reach Groq.") from exc
 

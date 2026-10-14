@@ -1,0 +1,51 @@
+# V1 JSON-validity eval set: 50 safe, varied story ideas (one per line). Lines starting with # are ignored.
+a little dragon who is scared of the dark
+a hedgehog who wants to learn to swim
+two friends who share one umbrella in the rain
+a bunny who gets lost in the woods and finds her way home
+a tiny turtle who wants to see the sea
+a shy otter who learns to share her shells
+a penguin who is nervous on the first day of school
+a cloud who wants to make a rainbow
+a snail who enters a slow and silly race
+a kitten who is afraid of the vacuum cleaner
+an owl who cannot fall asleep at night
+a little fox who loses her favourite red scarf
+a bear cub who wants to help his grandma bake
+a duckling who cannot quack yet
+a firefly who is too shy to glow
+a giraffe who wants to play hide and seek
+a mouse who builds a boat from a walnut shell
+a whale who sings a lullaby to the moon
+a squirrel who saves acorns for a friend
+a puppy who learns to wait his turn
+a ladybug with no spots who feels different
+a robot who learns how to give a hug
+a little star who falls down to earth
+a frog who wants to touch the clouds
+a sleepy sloth who is late for a party
+an elephant who is scared of a tiny mouse
+a koala who wants to try a new food
+a zebra who wishes for coloured stripes
+a seed that grows into a big sunflower
+a lamb who follows the wrong flock
+a little boat that is afraid of big waves
+a bee who helps a flower that is wilting
+a raccoon who learns to tidy up his room
+a hen who teaches her chicks to be kind
+a polar bear who misses the snow
+a dinosaur who wants to dance at the ball
+a crab who walks forwards for the first time
+a butterfly who is scared to leave her cocoon
+a parrot who learns to say thank you
+a mole who visits the sunshine for the first time
+a little cloud who is too small to rain
+a pig who wants to stay clean at the farm fair
+a monkey who shares the last banana
+a hippo who learns to float
+a deer who makes friends with a lonely tree
+a kangaroo whose pouch is full of surprises
+a seal who juggles a ball for his friends
+a little train who is afraid of the dark tunnel
+a goose who leads her family home in the snow
+a cat and a dog who build a blanket fort together
