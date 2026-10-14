@@ -6,7 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 StoryWeaver is a voice-first, illustrated children's audiobook generator (text ↔ image ↔ speech). It is also a learning project covering an MCP server, data collection, LLM fine-tuning, RAG and system design.
 
-`plan.md` is the source of truth. **V0 (foundations and deployment spike) is scaffolded:** backend health, echo, GPU and Groq checks, the Next.js status page, docker compose, CI and deploy workflows, and ADR-0001. Later versions are still only designs. Before you implement anything, read the matching version section of `plan.md` (§10). Each version has its own task list and exit criteria.
+`plan.md` is the source of truth. **V0 is done (14 Oct 2026):** frontend live on Vercel (`https://storyweaver-eight-woad.vercel.app`, root dir `frontend`), backend on the ZeroGPU Space `gaggaranushka/storyweaver` (`https://gaggaranushka-storyweaver.hf.space`). V1+ are still designs.
+
+Deploys: pushing to `main` redeploys Vercel; pushing a `v*` tag runs CI and then uploads `backend/` to the Space. Vercel env: `STORYWEAVER_API_URL` (the `*.hf.space` URL, never `huggingface.co/spaces/...`), `STORYWEAVER_API_KEY`, and `HF_TOKEN` (read-only; GPU quota). The write HF token lives only in GitHub Actions secrets. Space Secrets: `STORYWEAVER_API_KEY`, `GROQ_API_KEY`; Variables: `APP_ENV=prod`, `ALLOWED_ORIGINS` (Vercel domain only, no trailing slash). Before you implement anything, read the matching version section of `plan.md` (§10). Each version has its own task list and exit criteria. <!-- pragma: allowlist secret (names only, no values) -->
 
 Two deviations from the plan's layout:
 - Backend tests live in `backend/tests/`, not the root `tests/`.

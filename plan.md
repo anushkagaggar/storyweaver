@@ -481,8 +481,8 @@ Every version follows the **release process in §11**. Each version lists **buil
 
 ### V0: Foundations and deployment spike (week 1)
 **Tasks**
-- [ ] Machine setup (§1): Docker disk on D:, `HF_HOME`, uv, Python 3.12, GPU-in-Docker check.
-- [ ] Accounts:
+- [x] Machine setup (§1): Docker disk on D:, `HF_HOME`, uv, Python 3.12, GPU-in-Docker check.
+- [x] Accounts (V0 needs HF, Vercel, Groq and GitHub, all done; Neon, Upstash, R2, Langfuse and Grafana are first used in V1+):
   - **HF** (check account age ≥ 30 days and a verified email),
   - Vercel,
   - **Groq** (record limits, enable Zero Data Retention),
@@ -492,20 +492,22 @@ Every version follows the **release process in §11**. Each version lists **buil
   - Langfuse,
   - Grafana Cloud,
   - GitHub (public repo).
-- [ ] Monorepo skeleton (§5), pre-commit (ruff, mypy, detect-secrets), `.env.example`.
-- [ ] Backend:
+- [x] Monorepo skeleton (§5), pre-commit (ruff, mypy, detect-secrets), `.env.example`.
+- [x] Backend:
   - FastAPI `/health/live`, `/health/ready`, `/v1/echo`;
   - app built on `gr.Server` and started with `launch()` (required by ZeroGPU);
   - `@spaces.GPU` test function (a torch matmul) exposed as the Gradio API endpoint `gpu_check` (protected by `X-API-Key`);
   - `/v1/groq-check` (a 1-token gpt-oss-20b call).
-- [ ] Frontend: Next.js page with a route handler calling the backend; shows "GPU OK / Groq OK".
-- [ ] `infra/docker-compose.yml` with api (GPU), web, postgres, redis, SeaweedFS (S3; replaces MinIO, whose images are no longer published).
-- [ ] CI: lint, type-check, tests, `next build`. Deploy workflows: push `backend/` to the HF Space; Vercel Git integration.
+- [x] Frontend: Next.js page with a route handler calling the backend; shows "GPU OK / Groq OK".
+- [x] `infra/docker-compose.yml` with api (GPU), web, postgres, redis, SeaweedFS (S3; replaces MinIO, whose images are no longer published).
+- [x] CI: lint, type-check, tests, `next build`. Deploy workflows: push `backend/` to the HF Space; Vercel Git integration.
 - [x] **Spike and ADR-0001:** custom FastAPI routes plus `@spaces.GPU` do **not** work (ZeroGPU's startup hook runs only inside `Blocks.launch()`, and GPU quota is charged per caller from Gradio request headers). **Decision: hybrid.** REST stays FastAPI; GPU work runs only as Gradio API endpoints on a `gr.Server`; the Next.js server calls them over Gradio's HTTP API with `X-API-Key` and an HF token. See ADR-0001.
 
 **Learn:** Docker, environments, CI/CD, Spaces and ZeroGPU, the Groq API.
 
 **Exit criteria:** the **live Vercel page shows "GPU OK" and "Groq OK"** from the live Space.
+
+**Status: ✅ done (14 Oct 2026).** Live at `https://storyweaver-eight-woad.vercel.app` (backend `https://gaggaranushka-storyweaver.hf.space`, tag `v0.0.5`). Outstanding housekeeping, not blocking V1: fill in `docs/groq-limits.md`, confirm Groq Zero Data Retention, measure Space cold start.
 
 ### V1: Text Storyteller + MCP v1 (weeks 2–3)
 **Tasks**
