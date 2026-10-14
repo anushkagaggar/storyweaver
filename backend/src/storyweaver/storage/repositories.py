@@ -57,14 +57,16 @@ class StoryRepository:
         story.error_detail = error_detail
         await self._session.flush()
 
-    async def save_plan(self, story_row: StoryRow, plan: Story) -> None:
-        """Store a validated plan and mark the story ready. Replaces any earlier plan (safe to retry)."""
+    async def save_plan(
+        self, story_row: StoryRow, plan: Story, *, status: StoryStatus = StoryStatus.READY
+    ) -> None:
+        """Store a validated plan with `status`. Replaces any earlier plan (safe to retry)."""
         await self._session.execute(delete(SceneRow).where(SceneRow.story_id == story_row.id))
         await self._session.execute(delete(CharacterRow).where(CharacterRow.story_id == story_row.id))
         story_row.title = plan.title
         story_row.moral = plan.moral
         story_row.setting = plan.setting
-        story_row.status = StoryStatus.READY
+        story_row.status = status
         story_row.error_code = None
         story_row.error_detail = None
         self._session.add_all(
@@ -97,8 +99,9 @@ class StoryRepository:
 
 
 def row_to_story(row: StoryRow) -> Story:
-    """Rebuild the domain Story from a READY row loaded with characters and scenes."""
-    if row.status != StoryStatus.READY or row.title is None or row.moral is None or row.setting is None:
+    """Rebuild the domain Story from a planned row (CHECKING or READY) loaded with characters and scenes."""
+    planned = (StoryStatus.CHECKING, StoryStatus.READY)
+    if row.status not in planned or row.title is None or row.moral is None or row.setting is None:
         raise ValueError(f"Story {row.id} has no plan (status={row.status}).")
     return Story(
         title=row.title,

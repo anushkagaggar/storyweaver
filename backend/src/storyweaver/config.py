@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     redis_url: str | None = None
     # Keep this fraction of each Groq free-tier limit as the usable budget (0.9 leaves 10% headroom).
     quota_safety_margin: float = Field(default=0.9, gt=0, le=1)
+    # Safety guards (plan §6.6). Prompt Guard returns P(prompt attack); at or above the threshold is rejected.
+    prompt_guard_model: str = "meta-llama/llama-prompt-guard-2-22m"
+    safeguard_model: str = "openai/gpt-oss-safeguard-20b"
+    prompt_guard_threshold: float = Field(default=0.5, gt=0, lt=1)
     # Run the in-process job worker (disabled in tests, which drive the worker directly).
     worker_enabled: bool = True
 

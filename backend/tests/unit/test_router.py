@@ -50,8 +50,24 @@ async def test_requests_per_minute_limit_with_margin() -> None:
     assert info.value.retry_after_seconds == 40  # until the minute window ends
     assert "requests/60s" in str(info.value)
 
-    clock.now += 40  # next window
+    # 40 s later the two calls are still inside Groq's rolling 60 s, so the sliding estimate still blocks.
+    clock.now += 40
+    with pytest.raises(QuotaExhaustedError) as later:
+        await router.acquire([SAFEGUARD], Usage(requests=1, tokens=100))
+    clock.now += later.value.retry_after_seconds
     assert isinstance(await router.acquire([SAFEGUARD], Usage(requests=1, tokens=100)), Reservation)
+
+
+async def test_boundary_burst_is_blocked() -> None:
+    """Live failure on 14 Oct 2026: two calls at 0:58 and one at 1:01 are 3 calls inside 60 s for Groq."""
+    clock = Clock(now=1_000_000_020.0 - 2)  # 0:58, just before a minute boundary
+    router, _ = _router(clock)
+    await router.acquire([SAFEGUARD], Usage(requests=1, tokens=10))
+    await router.acquire([SAFEGUARD], Usage(requests=1, tokens=10))
+
+    clock.now += 3  # 1:01, a new fixed window
+    with pytest.raises(QuotaExhaustedError):
+        await router.acquire([SAFEGUARD], Usage(requests=1, tokens=10))
 
 
 async def test_settle_returns_unused_tokens() -> None:

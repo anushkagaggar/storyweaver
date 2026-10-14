@@ -16,6 +16,7 @@ from storyweaver.orchestrator.story_service import PlanStoryJob, StoryService, m
 from storyweaver.routing.llm import RoutedLLM
 from storyweaver.routing.router import ModelRouter
 from storyweaver.routing.store import InMemoryQuotaStore, QuotaStore, RedisQuotaStore
+from storyweaver.safety.guards import GuardModels, InputGuard, OutputGuard, PolicyChecker
 from storyweaver.storage.db import create_engine, create_session_factory
 from storyweaver.storage.models import JobKind
 
@@ -57,8 +58,6 @@ def build_services(settings: Settings) -> Services:
 
     services.engine = create_engine(settings.database_url)
     services.sessions = create_session_factory(services.engine)
-    services.stories = StoryService(services.sessions)
-
     store: QuotaStore
     if settings.redis_url:
         services.redis = Redis.from_url(settings.redis_url)
@@ -69,7 +68,9 @@ def build_services(settings: Settings) -> Services:
         store = InMemoryQuotaStore()
 
     if settings.groq_api_key is None:
-        logger.warning("GROQ_API_KEY is not set: stories will stay queued (no worker).")
+        # Fail closed: without the safety models no story can be accepted.
+        logger.warning("GROQ_API_KEY is not set: story creation is disabled (no safety checks, no worker).")
+        services.stories = StoryService(services.sessions, input_guard=None)
         return services
 
     services.groq = AsyncGroq(api_key=settings.groq_api_key.get_secret_value(), max_retries=0, timeout=120.0)
@@ -77,6 +78,13 @@ def build_services(settings: Settings) -> Services:
         GroqLLM(services.groq, reasoning_effort=settings.planner_reasoning_effort),
         ModelRouter(store, margin=settings.quota_safety_margin),
     )
+    guard_models = GuardModels(
+        prompt_guard=settings.prompt_guard_model,
+        safeguard=settings.safeguard_model,
+        prompt_guard_threshold=settings.prompt_guard_threshold,
+    )
+    policy = PolicyChecker(llm, guard_models)
+    services.stories = StoryService(services.sessions, input_guard=InputGuard(llm, policy, guard_models))
     planner = StoryPlanner(
         llm,
         planner_model=settings.planner_model_id,
@@ -87,7 +95,7 @@ def build_services(settings: Settings) -> Services:
     if settings.worker_enabled:
         services.worker = Worker(
             services.sessions,
-            {JobKind.PLAN: PlanStoryJob(services.sessions, planner)},
+            {JobKind.PLAN: PlanStoryJob(services.sessions, planner, OutputGuard(policy))},
             on_final_failure=make_story_failure_hook(services.sessions),
         )
     return services

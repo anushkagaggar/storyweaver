@@ -17,8 +17,9 @@ from storyweaver.jobs.queue import MAX_ATTEMPTS, JobQueue
 from storyweaver.jobs.worker import Worker
 from storyweaver.llm.client import ChatMessage, LLMResult, LLMUnavailableError
 from storyweaver.llm.planner import StoryPlanner
-from storyweaver.orchestrator.story_service import PlanStoryJob, make_story_failure_hook
+from storyweaver.orchestrator.story_service import PlanStoryJob, StoryService, make_story_failure_hook
 from storyweaver.routing.router import QuotaExhaustedError
+from storyweaver.safety.guards import SafetyCheckError, SafetyVerdict
 from storyweaver.storage.db import create_engine, create_session_factory
 from storyweaver.storage.models import JobKind, JobRow, JobStatus
 
@@ -43,12 +44,36 @@ class StubLLM:
         return LLMResult(json.dumps(make_planned_story(scenes)), model, 100, 900, 5.0, "stop")
 
 
+class StubGuard:
+    """Input or output guard returning a fixed verdict, or raising a queued exception first."""
+
+    def __init__(self, verdict: SafetyVerdict | None = None, *failures: Exception) -> None:
+        self.verdict = verdict or SafetyVerdict(allowed=True)
+        self.failures = list(failures)
+        self.calls = 0
+
+    async def check(self, _: Any) -> SafetyVerdict:
+        self.calls += 1
+        if self.failures:
+            raise self.failures.pop(0)
+        return self.verdict
+
+
 @pytest.fixture
-def client(database_url: str, session: AsyncSession, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+def input_guard() -> StubGuard:
+    return StubGuard()
+
+
+@pytest.fixture
+def client(
+    database_url: str, session: AsyncSession, input_guard: StubGuard, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[TestClient]:
     # `session` is requested only for its cleanup (it truncates the tables after each test).
     monkeypatch.setenv("DATABASE_URL", database_url)
     get_settings.cache_clear()
     with TestClient(create_app()) as test_client:
+        services = test_client.app.state.services  # type: ignore[attr-defined]
+        services.stories = StoryService(services.sessions, input_guard=input_guard)  # type: ignore[arg-type]
         yield test_client
 
 
@@ -63,11 +88,12 @@ async def db(database_url: str) -> AsyncIterator[Sessions]:
     await engine.dispose()
 
 
-def _worker(sessions: Sessions, llm: StubLLM) -> Worker:
+def _worker(sessions: Sessions, llm: StubLLM, output_guard: StubGuard | None = None) -> Worker:
     planner = StoryPlanner(llm, planner_model="p", repair_model="r", max_tokens=100, temperature=0.0)
+    guard = output_guard or StubGuard()
     return Worker(
         sessions,
-        {JobKind.PLAN: PlanStoryJob(sessions, planner)},
+        {JobKind.PLAN: PlanStoryJob(sessions, planner, guard)},  # type: ignore[arg-type]
         on_final_failure=make_story_failure_hook(sessions),
     )
 
@@ -224,3 +250,92 @@ def _always(content: str) -> Any:
         return LLMResult(content, model, 1, 1, 1.0, "stop")
 
     return complete_json
+
+
+# --- Safety (plan §6.6) ---------------------------------------------------------------------------------
+
+
+def test_unsafe_idea_is_rejected_and_never_stored(client: TestClient, input_guard: StubGuard) -> None:
+    input_guard.verdict = SafetyVerdict(False, "policy", "violence", "A fight with swords.")
+
+    response = _create(client, {"prompt": "a knight fights a dragon with swords"})
+
+    assert response.status_code == 422
+    problem = response.json()
+    assert (problem["code"], problem["category"]) == ("unsafe_input", "violence")
+    assert "gentle, kind idea" in problem["detail"]
+    assert client.get("/health/ready").status_code == 200
+
+
+async def test_unsafe_idea_leaves_no_rows(client: TestClient, input_guard: StubGuard, db: Sessions) -> None:
+    input_guard.verdict = SafetyVerdict(False, "rules", "urls", "Links can't be used.")
+
+    _create(client, {"prompt": "visit www.example.com"})
+
+    async with db() as s:
+        counts = (
+            await s.execute(text("SELECT (SELECT count(*) FROM stories), (SELECT count(*) FROM jobs)"))
+        ).one()
+    assert counts == (0, 0)
+
+
+@pytest.mark.parametrize(
+    ("failure", "status", "retry_after"),
+    [
+        (QuotaExhaustedError(retry_after_seconds=37), 429, "37"),
+        (SafetyCheckError("bad verdict"), 503, "30"),
+        (LLMUnavailableError("guard model withdrawn"), 503, "30"),
+    ],
+)
+def test_guard_unavailable_fails_closed(
+    client: TestClient, input_guard: StubGuard, failure: Exception, status: int, retry_after: str
+) -> None:
+    input_guard.failures.append(failure)
+
+    response = _create(client)
+
+    assert response.status_code == status
+    assert response.headers["Retry-After"] == retry_after
+    assert response.json()["code"] == "safety_check_unavailable"
+
+
+def test_idempotent_replay_skips_the_guard(client: TestClient, input_guard: StubGuard) -> None:
+    _create(client, key="key-abcdefgh")
+    _create(client, key="key-abcdefgh")
+
+    assert input_guard.calls == 1
+
+
+async def test_rejected_output_fails_story_and_hides_content(client: TestClient, db: Sessions) -> None:
+    created = _create(client).json()
+    guard = StubGuard(SafetyVerdict(False, "policy", "scary", "Too frightening."))
+
+    await _worker(db, StubLLM(), guard).run_once()
+
+    story = client.get(f"/v1/stories/{created['story_id']}", headers=API_KEY).json()
+    assert story["status"] == "failed"
+    assert story["error"]["code"] == "unsafe_output"
+    assert story["title"] is None and story["scenes"] == [] and story["characters"] == []
+
+
+async def test_deferred_output_check_resumes_without_replanning(client: TestClient, db: Sessions) -> None:
+    created = _create(client).json()
+    llm = StubLLM()
+    guard = StubGuard(None, QuotaExhaustedError(retry_after_seconds=5))
+    worker = _worker(db, llm, guard)
+
+    await worker.run_once()
+
+    story = client.get(f"/v1/stories/{created['story_id']}", headers=API_KEY).json()
+    assert story["status"] == "checking"
+    assert story["title"] is None and story["scenes"] == []  # unchecked content stays hidden
+    job = client.get(f"/v1/jobs/{created['job_id']}", headers=API_KEY).json()
+    assert job["status"] == "queued" and job["attempts"] == 0
+
+    await _make_due(db)
+    await worker.run_once()
+
+    assert llm.calls == 1  # planned once; the retry only re-ran the safety check
+    assert guard.calls == 2
+    ready = client.get(f"/v1/stories/{created['story_id']}", headers=API_KEY).json()
+    assert ready["status"] == "ready" and len(ready["scenes"]) == 5

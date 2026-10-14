@@ -49,3 +49,7 @@ class LLMClient(Protocol):
     ) -> LLMResult:
         """Return a completion whose content is JSON conforming to `schema` (strict mode where supported)."""
         ...
+
+    async def complete_text(self, *, model: str, messages: list[ChatMessage], max_tokens: int) -> LLMResult:
+        """Return a plain-text completion (e.g. a classifier score)."""
+        ...

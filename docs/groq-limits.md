@@ -32,6 +32,12 @@ RPM and TPD are not exposed in headers; those columns come from the docs table o
 - **Tightest limits for V1:** gpt-oss-safeguard-20b allows only **3 requests and 2,000 tokens per minute**, and the
   planner allows 8,000 tokens per minute. A story uses about 2K planner tokens (about 7K with a repair) and two
   safeguard calls, so at most about 1–2 stories per minute.
+- **Measured throughput (14 Oct 2026, slice 5):** a safeguard check uses about 850-1,200 tokens (policy ~580
+  tokens + content + verdict), so the 2,000 TPM limit (1,800 with the router's 10% headroom) allows **about one
+  safeguard check per minute**. With an input and an output check per story, that is **about one story every two
+  minutes**; a busy input check returns 429 with Retry-After, and a busy output check is deferred (no re-planning).
+  Note: plan.md risk 2 says "one safeguard call per story", while §2.3/§6.6 specify two (input + output); the code
+  follows §6.6.
 - **Daily ceiling:** planner TPD 200,000 ÷ ~2–3K tokens per story ≈ 60–100 stories a day without repairs, fewer
   with repairs (live test: 2 of 3 stories needed no repair).
 - Groq can change free-tier limits without notice. Re-check the headers (or Settings → Limits in the console)

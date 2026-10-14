@@ -36,6 +36,7 @@ NAMING_CONVENTION = {
 class StoryStatus(StrEnum):
     QUEUED = "queued"
     PLANNING = "planning"
+    CHECKING = "checking"  # planned, awaiting the output safety check; content is not shown yet
     READY = "ready"
     FAILED = "failed"
 

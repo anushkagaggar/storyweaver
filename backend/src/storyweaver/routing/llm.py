@@ -2,7 +2,7 @@
 
 import json
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any
 
 from storyweaver.llm.client import (
@@ -28,10 +28,14 @@ DEFAULT_RATE_LIMIT_COOLDOWN = 60.0
 UNAVAILABLE_COOLDOWN = 30.0
 
 
-def estimate_prompt_tokens(messages: Sequence[ChatMessage], schema: Mapping[str, Any]) -> int:
-    """Deliberately high estimate (about 3 characters per token), corrected by `settle` after the call."""
-    characters = sum(len(m.content) for m in messages) + len(json.dumps(schema))
-    return characters // 3 + 20 * len(messages)
+CHARS_PER_TOKEN = 4  # typical for English; `settle` replaces the estimate with Groq's real count
+
+
+def estimate_prompt_tokens(messages: Sequence[ChatMessage], schema: Mapping[str, Any] | None = None) -> int:
+    """Estimate input tokens before the call. Too high blocks small budgets (safeguard: 1,800 tokens/min);
+    too low only risks a Groq 429, which the router handles."""
+    characters = sum(len(m.content) for m in messages) + (len(json.dumps(schema)) if schema else 0)
+    return characters // CHARS_PER_TOKEN + 10 * len(messages)
 
 
 class RoutedLLM:
@@ -55,22 +59,36 @@ class RoutedLLM:
         max_tokens: int,
         temperature: float,
     ) -> LLMResult:
+        async def call(chosen: str) -> LLMResult:
+            return await self._inner.complete_json(
+                model=chosen,
+                messages=messages,
+                schema_name=schema_name,
+                schema=schema,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+
+        return await self._route(model, estimate_prompt_tokens(messages, schema) + max_tokens, call)
+
+    async def complete_text(self, *, model: str, messages: list[ChatMessage], max_tokens: int) -> LLMResult:
+        async def call(chosen: str) -> LLMResult:
+            return await self._inner.complete_text(model=chosen, messages=messages, max_tokens=max_tokens)
+
+        return await self._route(model, estimate_prompt_tokens(messages) + max_tokens, call)
+
+    async def _route(
+        self, model: str, estimated_tokens: int, call: Callable[[str], Awaitable[LLMResult]]
+    ) -> LLMResult:
         candidates = [model, *self._fallbacks.get(model, [])]
-        usage = Usage(requests=1, tokens=estimate_prompt_tokens(messages, schema) + max_tokens)
+        usage = Usage(requests=1, tokens=estimated_tokens)
         last_error: LLMError | None = None
 
         while candidates:
             reservation = await self._router.acquire(candidates, usage)  # may raise QuotaExhaustedError
             chosen = reservation.model
             try:
-                result = await self._inner.complete_json(
-                    model=chosen,
-                    messages=messages,
-                    schema_name=schema_name,
-                    schema=schema,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                )
+                result = await call(chosen)
             except LLMRateLimitedError as exc:
                 await self._router.release_tokens(reservation)
                 await self._router.cooldown(chosen, exc.retry_after_seconds or DEFAULT_RATE_LIMIT_COOLDOWN)

@@ -49,7 +49,7 @@ async def test_counters_expire_after_the_window(redis: Redis) -> None:
 
     assert isinstance(reservation, Reservation)
     ttl = await redis.ttl(reservation.keys["requests/60s"])
-    assert 40 <= ttl <= 45  # 40 s left in the window + 5 s grace
+    assert 100 <= ttl <= 105  # 40 s left + the next 60 s window (read as "previous") + 5 s grace
 
 
 async def test_adjust_corrects_only_token_counters(redis: Redis) -> None:
@@ -71,3 +71,15 @@ async def test_cooldown(redis: Redis) -> None:
 
     assert 2.0 < await store.cooldown_remaining(MODEL, NOW) <= 2.5
     assert await store.cooldown_remaining("other/model", NOW) == 0.0
+
+
+async def test_previous_window_counts_toward_the_rolling_limit(redis: Redis) -> None:
+    """Two calls at 0:58, one at 1:01: inside 60 s for Groq, so the third must be blocked."""
+    store = RedisQuotaStore(redis)
+    start = 1_000_000_020.0  # an exact minute boundary
+    for _ in range(2):
+        assert isinstance(await store.reserve(MODEL, LIMITS, Usage(requests=1), start - 2), Reservation)
+
+    blocked = await store.reserve(MODEL, LIMITS, Usage(requests=1), start + 1)
+
+    assert isinstance(blocked, Blocked) and blocked.limit.unit == "requests"

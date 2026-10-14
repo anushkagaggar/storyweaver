@@ -45,24 +45,33 @@ class GroqLLM:
         max_tokens: int,
         temperature: float,
     ) -> LLMResult:
-        payload = cast(
-            list[ChatCompletionMessageParam],
-            [{"role": message.role, "content": message.content} for message in messages],
-        )
         response_format: ResponseFormatResponseFormatJsonSchema = {
             "type": "json_schema",
             "json_schema": {"name": schema_name, "schema": schema, "strict": True},
         }
+        return await self._create(
+            model=model,
+            messages=messages,
+            max_tokens=max_tokens,
+            response_format=response_format,
+            temperature=temperature,
+            reasoning_effort=self._reasoning_effort if self._reasoning_effort else omit,
+        )
 
+    async def complete_text(self, *, model: str, messages: list[ChatMessage], max_tokens: int) -> LLMResult:
+        return await self._create(model=model, messages=messages, max_tokens=max_tokens)
+
+    async def _create(
+        self, *, model: str, messages: list[ChatMessage], max_tokens: int, **options: Any
+    ) -> LLMResult:
+        payload = cast(
+            list[ChatCompletionMessageParam],
+            [{"role": message.role, "content": message.content} for message in messages],
+        )
         start = time.perf_counter()
         try:
             completion = await self._client.chat.completions.create(
-                model=model,
-                messages=payload,
-                response_format=response_format,
-                max_completion_tokens=max_tokens,
-                temperature=temperature,
-                reasoning_effort=self._reasoning_effort if self._reasoning_effort else omit,
+                model=model, messages=payload, max_completion_tokens=max_tokens, **options
             )
         except groq.RateLimitError as exc:
             raise LLMRateLimitedError(_retry_after_seconds(exc.response)) from exc
