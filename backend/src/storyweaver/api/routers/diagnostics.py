@@ -1,10 +1,8 @@
 import logging
 import time
-from typing import Any
 
 import groq
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
 from storyweaver.api.deps import GroqClientDep, SettingsDep, require_api_key
@@ -37,19 +35,7 @@ async def echo(body: EchoRequest, request: Request) -> EchoResponse:
     return EchoResponse(message=body.message, request_id=get_request_id(request))
 
 
-@router.get("/gpu-check")
-async def gpu_check() -> dict[str, Any]:
-    try:
-        from storyweaver.diagnostics import run_gpu_matmul
-    except ImportError as exc:
-        logger.warning("GPU diagnostics unavailable: %s", exc)
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "GPU support is not installed.") from exc
-
-    result: dict[str, Any] = await run_in_threadpool(run_gpu_matmul)
-    if not result.get("ok"):
-        reason = str(result.get("reason", "GPU unavailable."))
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, reason)
-    return result
+# GPU work is not a REST route: see storyweaver/api/gpu_endpoints.py and ADR-0001.
 
 
 @router.get("/groq-check")

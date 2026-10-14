@@ -2,7 +2,7 @@
 
 export type CheckResult = { ok: boolean; status: number; detail: unknown };
 
-function backendConfig(): { baseUrl: string; apiKey: string } {
+export function backendConfig(): { baseUrl: string; apiKey: string } {
   const baseUrl = process.env.STORYWEAVER_API_URL;
   const apiKey = process.env.STORYWEAVER_API_KEY;
   if (!baseUrl || !apiKey) {

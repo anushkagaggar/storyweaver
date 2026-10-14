@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Smoke test for the running local stack (docker compose). Run from the repo root in Git Bash:
+# Smoke test for the running local stack (docker compose). Covers REST routes, the Gradio GPU endpoint and the
+# frontend. Run from the repo root in Git Bash:
 #   bash scripts/local_smoke.sh .env
 # Reads STORYWEAVER_API_KEY from the given .env without printing it. Spends one tiny Groq call.
 set -u
@@ -27,12 +28,34 @@ rid=$(curl -s -D - -o /dev/null -H 'X-Request-ID: smoke-123' $API/health/live | 
 check "X-Request-ID propagated"         smoke-123 "$rid"
 acao=$(curl -s -D - -o /dev/null -X OPTIONS $API/v1/echo -H 'Origin: http://localhost:3000' -H 'Access-Control-Request-Method: POST' | tr -d '\r' | awk -F': ' 'tolower($1)=="access-control-allow-origin"{print $2}')
 check "CORS allows localhost:3000"      http://localhost:3000 "$acao"
-check "CORS rejects other origin"       400 "$(code -X OPTIONS $API/v1/echo -H 'Origin: https://evil.example' -H 'Access-Control-Request-Method: POST')"
+# Browsers enforce CORS via Access-Control-Allow-Origin; Gradio's own CORS layer answers 200 without it.
+acao=$(curl -s -D - -o /dev/null -X OPTIONS $API/v1/echo -H 'Origin: https://evil.example' -H 'Access-Control-Request-Method: POST' | tr -d '\r' | awk -F': ' 'tolower($1)=="access-control-allow-origin"{print $2}')
+check "CORS gives other origin no ACAO" "" "$acao"
+acao=$(curl -s -D - -o /dev/null -X OPTIONS $API/gradio_api/call/gpu_check -H 'Origin: https://evil.example' -H 'Access-Control-Request-Method: POST' | tr -d '\r' | awk -F': ' 'tolower($1)=="access-control-allow-origin"{print $2}')
+check "CORS (Gradio route) no ACAO"     "" "$acao"
 check "unknown route -> 404"            404 "$(code -H "X-API-Key: $KEY" $API/v1/nope)"
-check "gpu-check -> 200 (GPU in Docker)" 200 "$(code -H "X-API-Key: $KEY" $API/v1/gpu-check)"
 check "groq-check -> 200 (1 tiny call)" 200 "$(code -H "X-API-Key: $KEY" $API/v1/groq-check)"
-check "Gradio /ui/ -> 200"              200 "$(code $API/ui/)"
 check "/docs available locally"         200 "$(code $API/docs)"
+check "REST gpu-check removed -> 404"   404 "$(code -H "X-API-Key: $KEY" $API/v1/gpu-check)"
+
+echo "--- Gradio GPU endpoint (ADR-0001)"
+# gradio_call <api name> [curl header args...] -> prints "<event>|<data>" of the final SSE event
+gradio_call() {
+  local name=$1; shift
+  local id
+  id=$(curl -s -m 30 -X POST "$API/gradio_api/call/$name" -H 'Content-Type: application/json' "$@" -d '{"data":[]}' \
+    | python -I -c "import json,sys;print(json.load(sys.stdin).get('event_id',''))" 2>/dev/null)
+  [ -n "$id" ] || { echo "no-event-id|"; return; }
+  curl -s -m 120 "$API/gradio_api/call/$name/$id" "$@" | tr -d '\r' \
+    | awk '/^event:/{e=substr($0,8)} /^data:/{d=substr($0,7)} END{print e "|" d}'
+}
+res=$(gradio_call gpu_check -H "X-API-Key: $KEY")
+check "gpu_check with key completes"    complete "${res%%|*}"
+check "gpu_check ran on CUDA"           True "$(echo "${res#*|}" | python -I -c 'import json,sys;print(json.load(sys.stdin)[0].get("ok"))' 2>/dev/null)"
+res=$(gradio_call gpu_check)
+check "gpu_check without key -> error"  error "${res%%|*}"
+res=$(gradio_call gpu_check -H 'X-API-Key: wrong')
+check "gpu_check wrong key -> error"    error "${res%%|*}"
 
 echo "--- Frontend"
 check "home page 200"                   200 "$(code $WEB/)"

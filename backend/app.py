@@ -1,4 +1,4 @@
-"""Hugging Face Space entrypoint: FastAPI with the Gradio UI mounted at /ui."""
+"""Hugging Face Space entrypoint: a Gradio Server carrying the REST API and the GPU endpoints (ADR-0001)."""
 
 import os
 import sys
@@ -10,15 +10,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 os.environ.setdefault("GRADIO_ANALYTICS_ENABLED", "False")
 os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 
-import gradio as gr
-import uvicorn
-
-# ZeroGPU refuses to start unless at least one @spaces.GPU function is imported at startup.
-import storyweaver.diagnostics  # noqa: F401
 from storyweaver.api.main import create_app
-from storyweaver.ui import build_demo
 
-app = gr.mount_gradio_app(create_app(), build_demo(), path="/ui")
+app = create_app()
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "7860")))
+    # launch() (not uvicorn.run) is required: ZeroGPU's startup hook runs inside it.
+    app.launch(
+        server_name="0.0.0.0",
+        server_port=int(os.getenv("PORT", "7860")),
+        show_error=False,
+        ssr_mode=False,
+        mcp_server=False,
+    )

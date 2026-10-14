@@ -1,21 +1,27 @@
 import logging
 
-from fastapi import FastAPI
+import gradio as gr
 from fastapi.middleware.cors import CORSMiddleware
 
 from storyweaver import __version__
 from storyweaver.api.errors import register_error_handlers
+from storyweaver.api.gpu_endpoints import register_gpu_endpoints
 from storyweaver.api.middleware import REQUEST_ID_HEADER, request_id_middleware
 from storyweaver.api.routers import diagnostics, health
 from storyweaver.config import get_settings
 
 
-def create_app() -> FastAPI:
+def create_app() -> gr.Server:
+    """Build the app: a Gradio Server (a FastAPI subclass) carrying REST routes and Gradio GPU endpoints.
+
+    Gradio Server is required by ZeroGPU (see ADR-0001); REST routes work on it exactly as on FastAPI.
+    Gradio GPU endpoints are registered here but only become routable after server.launch().
+    """
     settings = get_settings()
     logging.basicConfig(level=settings.log_level, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
     is_local = settings.app_env == "local"
-    app = FastAPI(
+    app = gr.Server(
         title="StoryWeaver API",
         version=__version__,
         # Schema and interactive docs only locally; the production API is called by the Vercel server only.
@@ -36,4 +42,5 @@ def create_app() -> FastAPI:
 
     app.include_router(health.router)
     app.include_router(diagnostics.router)
+    register_gpu_endpoints(app)
     return app

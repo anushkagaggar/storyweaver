@@ -118,7 +118,7 @@ The **quota-aware router** (§6.3):
 | Concern | Service | Free-tier facts (verified 12 Oct 2026) | Gotchas |
 |---|---|---|---|
 | Frontend | **Vercel Hobby** | 300 s function maximum; 100 GB transfer; 1M invocations | **Non-commercial only**; never proxy long jobs through it |
-| Backend | **HF ZeroGPU Gradio Space** (FastAPI + Gradio mounted) | Free accounts: **up to 2 ZeroGPU Spaces** (needs a **verified email and an account at least 30 days old**). Docker and CPU Gradio Spaces need PRO. | Sleeps after 48 h idle; ephemeral disk; GPU quota charged **per caller** (anonymous ≈ 2 min/day, free account ≈ 5 min/day); 60 s default per GPU call; PyTorch only |
+| Backend | **HF ZeroGPU Gradio Space** (`gr.Server`: FastAPI REST + Gradio GPU endpoints, ADR-0001) | Free accounts: **up to 2 ZeroGPU Spaces** (needs a **verified email and an account at least 30 days old**). Docker and CPU Gradio Spaces need PRO. | Sleeps after 48 h idle; ephemeral disk; GPU quota charged **per caller** (anonymous ≈ 2 min/day, free account ≈ 5 min/day); 60 s default per GPU call; PyTorch only |
 | Database + vectors | **Neon Postgres + pgvector** | 1 GB per project, no card | Scales to zero after 5 minutes (cold start) |
 | Cache, rate-limit counters | **Upstash Redis** | 500K commands/month, 250 MB | Watch the command count |
 | Images and audio | **Cloudflare R2** | 10 GB, free egress | Card requirement *(unverified)* |
@@ -151,11 +151,11 @@ The **quota-aware router** (§6.3):
                          └───────────────┬─────────────────────────────────────────────────────────┘
                                          │ HTTPS + API key
                          ┌───────────────▼──────────── HF ZeroGPU Space ──────────────────────────┐
-                         │ FastAPI app (+ Gradio mounted; MCP Streamable HTTP in V9)               │
+                         │ gr.Server (FastAPI): REST /v1 + Gradio GPU API (ADR-0001); MCP in V9    │
                          │  api/ → orchestrator/ → services → adapters                              │
                          │  • in-process async job worker (jobs table in Neon, idempotent keys)     │
                          │  • ModelRouter (quota-aware, Upstash token buckets mirroring Groq limits)│
-                         │  • @spaces.GPU: SDXL+IP-Adapter+LoRA, Florence-2, fine-tuned Qwen3-4B    │
+                         │  • @spaces.GPU via Gradio API only: SDXL, Florence-2, fine-tuned Qwen3   │
                          │  • CPU: bge embeddings/reranker, SigLIP, Kokoro, faster-whisper fallback │
                          └──┬─────────────┬──────────────┬─────────────┬──────────────┬────────────┘
                             ▼             ▼              ▼             ▼              ▼
@@ -194,7 +194,7 @@ storyweaver/
 ├── README.md
 ├── .gitignore  .env.example  .pre-commit-config.yaml
 ├── backend/                        # → HF Space repo (pushed by CI)
-│   ├── app.py                      # Space entrypoint: FastAPI + gr.mount_gradio_app
+│   ├── app.py                      # Space entrypoint: gr.Server (REST + Gradio GPU API), started with launch()
 │   ├── README.md                   # HF Space card (sdk: gradio, hardware: zero-a10g/zerogpu)
 │   ├── pyproject.toml  uv.lock
 │   ├── requirements.txt            # exported from uv.lock (HF installs this)
@@ -370,7 +370,7 @@ The MCP server is a **thin adapter over the FastAPI API**. It contains no busine
 | GET | `/v1/jobs/{id}` | 200 | 404 |
 | POST | `/v1/speech/transcribe` | 200 | 413 (> 10 MB), 415, 422 (> 60 s or silent) |
 | POST | `/v1/speech/narrate` | 200 | 422 |
-| POST | `/v1/images/generate` | 202 | 429 (GPU quota) |
+| — | Image generation: Gradio API endpoint, not REST (ADR-0001). How the job worker triggers GPU work is decided in V3. | — | GPU quota exhausted |
 | POST | `/v1/images/describe` | 200 | 413, 415 |
 | GET | `/health/live`, `/health/ready` | 200 | 503 |
 
@@ -382,6 +382,7 @@ The MCP server is a **thin adapter over the FastAPI API**. It contains no busine
 - An `Idempotency-Key` on POSTs.
 - Rate limit: 10 stories per hour per client (Upstash).
 - Every handler is `async`.
+- **GPU-bound work is never a REST route** (ADR-0001): it is a Gradio API endpoint on the same `gr.Server`, protected by the same `X-API-Key`, called with an HF token so ZeroGPU charges that account (anonymous calls get about 2 GPU-min/day).
 
 ### 6.9 Environment variables (`.env.example`; secrets go in HF Space **Secrets** and Vercel env, never committed)
 ```
@@ -494,13 +495,13 @@ Every version follows the **release process in §11**. Each version lists **buil
 - [ ] Monorepo skeleton (§5), pre-commit (ruff, mypy, detect-secrets), `.env.example`.
 - [ ] Backend:
   - FastAPI `/health/live`, `/health/ready`, `/v1/echo`;
-  - Gradio mounted;
-  - `@spaces.GPU` test function (a torch matmul) exposed via `/v1/gpu-check`;
+  - app built on `gr.Server` and started with `launch()` (required by ZeroGPU);
+  - `@spaces.GPU` test function (a torch matmul) exposed as the Gradio API endpoint `gpu_check` (protected by `X-API-Key`);
   - `/v1/groq-check` (a 1-token gpt-oss-20b call).
 - [ ] Frontend: Next.js page with a route handler calling the backend; shows "GPU OK / Groq OK".
 - [ ] `infra/docker-compose.yml` with api (GPU), web, postgres, redis, SeaweedFS (S3; replaces MinIO, whose images are no longer published).
 - [ ] CI: lint, type-check, tests, `next build`. Deploy workflows: push `backend/` to the HF Space; Vercel Git integration.
-- [ ] **Spike and ADR-0001:** do custom FastAPI routes plus `@spaces.GPU` work on the ZeroGPU Space? If not, switch to `gr.api` endpoints and `@gradio/client` in the Next.js route handlers.
+- [x] **Spike and ADR-0001:** custom FastAPI routes plus `@spaces.GPU` do **not** work (ZeroGPU's startup hook runs only inside `Blocks.launch()`, and GPU quota is charged per caller from Gradio request headers). **Decision: hybrid.** REST stays FastAPI; GPU work runs only as Gradio API endpoints on a `gr.Server`; the Next.js server calls them over Gradio's HTTP API with `X-API-Key` and an HF token. See ADR-0001.
 
 **Learn:** Docker, environments, CI/CD, Spaces and ZeroGPU, the Groq API.
 
@@ -744,7 +745,7 @@ Every version follows the **release process in §11**. Each version lists **buil
 | 3 | Free-tier limit figures differ between sources | Docs vs third-party blogs | Treat your console's Limits page as the source of truth; config-driven limit table |
 | 4 | Child voice sent to a third party (Groq, US) | COPPA amendment (voiceprints = personal info); Groq data docs | Zero Data Retention, no storage, parent-operated, privacy notice and DPIA, `STT_ENGINE=local` option |
 | 5 | HF free accounts can't run Docker or CPU Spaces; ZeroGPU needs an account ≥ 30 days old | HF spaces-overview + ZeroGPU docs | ZeroGPU Gradio Space + FastAPI; check account age in V0 |
-| 6 | Custom FastAPI routes + `@spaces.GPU` on ZeroGPU not proven | Couldn't confirm | V0 spike; fallback to `gr.api` + `@gradio/client` |
+| 6 | Custom FastAPI routes + `@spaces.GPU` don't work on ZeroGPU (**confirmed in V0**: `No @spaces.GPU function detected during startup`) | V0 spike, `spaces` source | Hybrid design (ADR-0001): `gr.Server` + `launch()`; GPU only via Gradio API endpoints. Open for V3: GPU work started by the job worker has no caller to charge quota to |
 | 7 | HF proxy timeouts and WebSocket problems | HF forum (user reports) | 202 + polling only; GPU calls < 60 s |
 | 8 | Vercel 300 s limit, non-commercial | Vercel docs | Short route handlers only; portfolio use |
 | 9 | 6 GB VRAM | Unsloth and diffusers docs | One model at a time, 4-bit, CPU offload; SDXL LoRA and gpt-oss-20b training on a T4 |

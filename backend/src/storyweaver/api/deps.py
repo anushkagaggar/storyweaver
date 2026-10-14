@@ -10,13 +10,21 @@ from storyweaver.config import Settings, get_settings
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 
 
+INVALID_API_KEY_MESSAGE = "Missing or invalid API key."  # pragma: allowlist secret
+
+
+def api_key_is_valid(provided: str | None, settings: Settings) -> bool:
+    """Constant-time API key check shared by REST routes and Gradio GPU endpoints."""
+    expected = settings.storyweaver_api_key.get_secret_value()
+    return provided is not None and secrets.compare_digest(provided.encode(), expected.encode())
+
+
 async def require_api_key(
     settings: SettingsDep,
     x_api_key: Annotated[str | None, Header()] = None,
 ) -> None:
-    expected = settings.storyweaver_api_key.get_secret_value()
-    if x_api_key is None or not secrets.compare_digest(x_api_key.encode(), expected.encode()):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing or invalid API key.")
+    if not api_key_is_valid(x_api_key, settings):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, INVALID_API_KEY_MESSAGE)
 
 
 async def get_groq_client(settings: SettingsDep) -> AsyncIterator[AsyncGroq]:

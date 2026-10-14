@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { callBackend } from "@/lib/backend";
+import { callGradioApi } from "@/lib/gradio";
 
 export const dynamic = "force-dynamic";
 
@@ -9,7 +10,7 @@ export async function GET() {
     // GPU check may queue on ZeroGPU; keep well under Vercel's function limit.
     const [ready, gpu, groq] = await Promise.all([
       callBackend("/health/ready", 15_000),
-      callBackend("/v1/gpu-check", 90_000),
+      callGradioApi("gpu_check", 90_000),
       callBackend("/v1/groq-check", 30_000),
     ]);
     return NextResponse.json({ backend: ready, gpu, groq });

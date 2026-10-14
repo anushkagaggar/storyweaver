@@ -16,7 +16,7 @@ Two deviations from the plan's layout:
 
 ## Stack (fixed by the plan)
 
-- **Backend:** Python 3.12 (managed with `uv`) and FastAPI with Gradio mounted. It deploys to a **Hugging Face ZeroGPU Gradio Space**, which is why there is no Docker Space and `backend/Dockerfile` is only a local mirror of the Space.
+- **Backend:** Python 3.12 (managed with `uv`). The app is a **`gr.Server`** (Gradio Server mode, a FastAPI subclass) started with `server.launch()`; see the ZeroGPU rule below. It deploys to a **Hugging Face ZeroGPU Gradio Space**, which is why there is no Docker Space and `backend/Dockerfile` is only a local mirror of the Space.
 - **Frontend:** Next.js (App Router) and TypeScript, deployed to **Vercel Hobby**.
 - **MCP server:** FastMCP in `mcp_server/`. It uses stdio until V9, then Streamable HTTP on the Space.
 - **Data and infrastructure:** Neon Postgres with pgvector, Upstash Redis, Cloudflare R2 (SeaweedFS S3 locally, because MinIO images are no longer published; the planned `MinioBlobStore` becomes a generic S3 adapter serving both), Langfuse, Grafana Cloud, MLflow, DVC + DagsHub and Prefect OSS.
@@ -30,14 +30,14 @@ uv sync
 uv run ruff check . ; uv run ruff format --check . ; uv run mypy
 uv run pytest -m unit                                            # CI gate today
 uv run pytest tests/unit/test_groq_check.py::test_groq_check_success   # single test
-uv run python app.py                                             # :7860 (/docs locally, /ui Gradio)
+uv run python app.py                                             # :7860 (/docs locally; Gradio API under /gradio_api)
 
 # frontend/
 npm run dev ; npm run lint ; npm run typecheck ; npm run build
 
 # repo root: full local stack (api with GPU, web, postgres+pgvector, redis, SeaweedFS S3 on :8333)
 docker compose -f infra/docker-compose.yml --env-file .env up --build
-bash scripts/local_smoke.sh .env                                 # 22 end-to-end checks against the running stack; exits non-zero on failure
+bash scripts/local_smoke.sh .env                                 # 26 end-to-end checks (REST, Gradio GPU endpoint, frontend); exits non-zero on failure
 ```
 
 The user's rule is to test locally (unit tests plus the smoke script against the Docker stack) before deploying anything.
@@ -57,7 +57,15 @@ Pre-commit runs ruff, mypy (both as local hooks through `uv run`) and detect-sec
 7. **The MCP server is a thin adapter over the REST API.** It holds no business logic (§6.7).
 8. **API conventions** (§6.8): `/v1` prefix, `X-API-Key` (sent only from Vercel server-side code), RFC 7807 errors, `X-Request-ID`, async handlers, and CORS limited to the Vercel domain and localhost.
 9. **Migrations** use Alembic and must be expand/contract only (backward-compatible). The Space runs `alembic upgrade head` on start-up, and a rollback never needs a down-migration.
-10. **Child safety and privacy** (§6.6):
+10. **ZeroGPU hybrid (ADR-0001).** ZeroGPU only works through Gradio: its startup hook runs inside `Blocks.launch()`, and GPU quota is charged per caller from Gradio request headers. So:
+    - Start the app with `server.launch()`, never `uvicorn.run`.
+    - **Never call a `@spaces.GPU` function from a REST route.** Expose GPU work only as Gradio API endpoints in `api/gpu_endpoints.py` (`server.api(...)`), each checking `X-API-Key` via `api_key_is_valid()`.
+    - Callers use Gradio's two-step HTTP API (`frontend/lib/gradio.ts`) and send an HF token in `Authorization`, so ZeroGPU charges that account.
+    - `@spaces.GPU` modules must be imported at startup (`gpu_endpoints.py` imports them).
+    - HF installs `gradio[oauth,mcp]` on the Space; CI resolves that install set, so keep the lock compatible.
+    - Gradio adds its own CORS layer: unknown origins get HTTP 200 without `Access-Control-Allow-Origin`.
+    - Open for V3: GPU work started by the job worker has no caller to charge quota to.
+11. **Child safety and privacy** (§6.6):
     - Input checks run in this order: rules, then Prompt Guard, then gpt-oss-safeguard against `safety/policy.md`. The full output story is checked as well.
     - Audio is **never stored or logged**.
     - `STT_ENGINE=local` keeps voice processing on the Space.
