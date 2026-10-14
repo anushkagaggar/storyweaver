@@ -35,11 +35,11 @@ uv run pytest tests/unit/test_groq_check.py::test_groq_check_success   # single 
 uv run python app.py                                             # :7860 (/docs locally; Gradio API under /gradio_api)
 
 # frontend/
-npm run dev ; npm run lint ; npm run typecheck ; npm run build
+npm run dev ; npm run lint ; npm run typecheck ; npm test ; npm run build   # npm test = Vitest (tests/*.test.ts)
 
 # repo root: full local stack (api with GPU, web, postgres+pgvector, redis, SeaweedFS S3 on :8333)
 docker compose -f infra/docker-compose.yml --env-file .env up --build
-bash scripts/local_smoke.sh .env                                 # 27 end-to-end checks (REST, Gradio GPU endpoint, frontend); exits non-zero on failure
+bash scripts/local_smoke.sh .env                                 # 33 end-to-end checks (REST, Gradio GPU endpoint, frontend); exits non-zero on failure
 ```
 
 The user's rule is to test locally (unit tests plus the smoke script against the Docker stack) before deploying anything.

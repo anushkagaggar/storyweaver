@@ -62,6 +62,14 @@ check "gpu_check wrong key -> error"    error "${res%%|*}"
 
 echo "--- Frontend"
 check "home page 200"                   200 "$(code $WEB/)"
+check "status page 200"                 200 "$(code $WEB/status)"
+check "story page 200"                  200 "$(code $WEB/story/00000000-0000-4000-8000-000000000000)"
+# Story routes. The unsafe idea is a URL: the rules reject it before any model call, so no Groq quota is used.
+unsafe=$(curl -s -m 30 -X POST $WEB/api/stories -H 'Content-Type: application/json' -d '{"prompt":"visit www.example.com with Pip"}')
+check "api/stories unsafe idea -> 422"  "unsafe_input|urls" "$(echo "$unsafe" | python -I -c 'import json,sys;d=json.load(sys.stdin);print(d.get("code"),d.get("category"),sep="|")')"
+check "api/stories bad JSON -> 400"     400 "$(code -X POST $WEB/api/stories -H 'Content-Type: application/json' -d '{bad')"
+check "api/stories/<bad id> -> 404"     404 "$(code $WEB/api/stories/not-a-uuid)"
+check "api/stories/<unknown> -> 404"    404 "$(code $WEB/api/stories/00000000-0000-4000-8000-000000000000)"
 status=$(curl -s -m 180 $WEB/api/status)
 check "status: backend ok"  True "$(echo "$status" | python -I -c 'import json,sys;print(json.load(sys.stdin)["backend"]["ok"])')"
 check "status: gpu ok"      True "$(echo "$status" | python -I -c 'import json,sys;print(json.load(sys.stdin)["gpu"]["ok"])')"

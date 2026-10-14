@@ -1,6 +1,10 @@
 :root {
   --bg: #fffdf8;
   --fg: #1f1b2e;
+  --surface: #ffffff;
+  --border: #e4dfd3;
+  --accent: #5b4bc4;
+  --accent-fg: #ffffff;
   --ok: #1b7f4b;
   --fail: #b42318;
   --muted: #6b6780;
@@ -10,6 +14,10 @@
   :root {
     --bg: #15131d;
     --fg: #eeeaf7;
+    --surface: #1e1b29;
+    --border: #34304a;
+    --accent: #a99cf5;
+    --accent-fg: #15131d;
     --ok: #4ade80;
     --fail: #f87171;
     --muted: #a19db3;
@@ -21,6 +29,7 @@ body {
   background: var(--bg);
   color: var(--fg);
   font-family: system-ui, sans-serif;
+  line-height: 1.5;
 }
 
 main {
@@ -29,6 +38,161 @@ main {
   padding: 2rem 1rem;
 }
 
+.lead,
+.hint,
+.setting {
+  color: var(--muted);
+}
+
+/* Story form */
+.story-form {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.story-form label,
+.story-form legend {
+  font-weight: 600;
+}
+
+textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.75rem;
+  font: inherit;
+  color: inherit;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  resize: vertical;
+}
+
+fieldset {
+  border: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.choice {
+  font-weight: 400 !important;
+  display: inline-flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.hint {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+button {
+  font: inherit;
+  padding: 0.6rem 1.2rem;
+  border-radius: 8px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--accent-fg);
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+button:focus-visible,
+textarea:focus-visible,
+input:focus-visible,
+a:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+a {
+  color: var(--accent);
+}
+
+.error {
+  color: var(--fail);
+  margin: 0;
+}
+
+/* Progress and failure */
+.story-status {
+  text-align: center;
+  padding: 3rem 0;
+}
+
+.story-status.failed h1 {
+  color: var(--fail);
+}
+
+.spinner {
+  width: 2.5rem;
+  height: 2.5rem;
+  margin: 0 auto 1rem;
+  border: 4px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+  }
+}
+
+/* Storybook */
+.storybook header h1 {
+  margin-bottom: 0.25rem;
+}
+
+.page {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin: 1.5rem 0 1rem;
+  min-height: 10rem;
+}
+
+.page-number {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.page-text {
+  margin: 0;
+  font-size: 1.25rem;
+  line-height: 1.7;
+}
+
+.page-nav {
+  display: flex;
+  justify-content: space-between;
+}
+
+.moral {
+  margin-top: 1.5rem;
+}
+
+.again {
+  margin-top: 2rem;
+  text-align: center;
+}
+
+/* V0 status page (/status) */
 .checks {
   list-style: none;
   padding: 0;
@@ -38,9 +202,17 @@ main {
   margin-bottom: 0.75rem;
 }
 
-.checks .ok strong { color: var(--ok); }
-.checks .fail strong { color: var(--fail); }
-.checks .pending strong { color: var(--muted); }
+.checks .ok strong {
+  color: var(--ok);
+}
+
+.checks .fail strong {
+  color: var(--fail);
+}
+
+.checks .pending strong {
+  color: var(--muted);
+}
 
 pre {
   white-space: pre-wrap;
