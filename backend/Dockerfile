@@ -18,8 +18,9 @@ COPY pyproject.toml uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --extra gpu
 
-COPY app.py ./
+COPY app.py alembic.ini ./
 COPY src ./src
+COPY migrations ./migrations
 
 RUN useradd --create-home --uid 1000 app
 USER app

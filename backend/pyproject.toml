@@ -12,6 +12,9 @@ dependencies = [
     "spaces>=0.51",
     "pydantic-settings>=2.15",
     "groq>=1.7",
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg>=0.30",
+    "alembic>=1.16",
 ]
 
 [project.optional-dependencies]
@@ -36,7 +39,7 @@ package = false
 exclude-newer = "2026-09-29T00:00:00Z"
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+pythonpath = ["src", "tests"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [

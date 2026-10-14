@@ -45,9 +45,7 @@ async def _call(llm: GroqLLM) -> object:
 
 
 def _llm() -> GroqLLM:
-    return GroqLLM(
-        AsyncGroq(api_key=DUMMY_KEY, max_retries=0), reasoning_effort="low"
-    )  # pragma: allowlist secret
+    return GroqLLM(AsyncGroq(api_key=DUMMY_KEY, max_retries=0), reasoning_effort="low")
 
 
 @respx.mock

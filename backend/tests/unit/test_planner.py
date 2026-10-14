@@ -3,6 +3,7 @@ from typing import Any
 
 import pytest
 
+from story_samples import make_planned_story
 from storyweaver.llm.client import ChatMessage, LLMResult
 from storyweaver.llm.planner import PlanningError, StoryPlanner, StoryRequest
 from storyweaver.llm.schemas import PLANNED_STORY_SCHEMA
@@ -98,8 +99,6 @@ async def test_unparseable_json_is_repaired(planned_story: dict[str, Any]) -> No
 
 
 async def test_six_scenes_requested(planned_story: dict[str, Any]) -> None:
-    from conftest import make_planned_story
-
     llm = FakeLLM(json.dumps(make_planned_story(6)))
 
     result = await _planner(llm).plan(StoryRequest(prompt="x", num_scenes=6), story_key="s1")

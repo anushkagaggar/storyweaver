@@ -15,6 +15,17 @@ jobs:
     defaults:
       run:
         working-directory: backend
+    # Throwaway Postgres for integration tests (same image as local docker compose).
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: storyweaver
+          POSTGRES_PASSWORD: ci-only-password  # pragma: allowlist secret (throwaway CI container)
+          POSTGRES_DB: storyweaver
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U storyweaver" --health-interval 5s --health-timeout 3s --health-retries 10
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v6
@@ -26,7 +37,9 @@ jobs:
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run mypy
-      - run: uv run pytest -m unit
+      - run: uv run pytest -m "unit or integration"
+        env:
+          TEST_DATABASE_URL: postgresql+asyncpg://storyweaver:ci-only-password@localhost:5432/storyweaver_test  # pragma: allowlist secret
       # HF Gradio Spaces install our requirements.txt together with gradio[oauth,mcp], spaces and a torch cap.
       # Resolve that exact set for the Space's platform so conflicts fail here, not in the Space build.
       - name: Check the Space can install our requirements
