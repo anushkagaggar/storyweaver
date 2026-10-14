@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     redis_url: str | None = None
     # Keep this fraction of each Groq free-tier limit as the usable budget (0.9 leaves 10% headroom).
     quota_safety_margin: float = Field(default=0.9, gt=0, le=1)
+    # Run the in-process job worker (disabled in tests, which drive the worker directly).
+    worker_enabled: bool = True
 
     # Comma-separated list of origins allowed by CORS.
     allowed_origins: str = "http://localhost:3000"

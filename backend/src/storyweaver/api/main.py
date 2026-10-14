@@ -1,4 +1,6 @@
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 import gradio as gr
@@ -9,8 +11,9 @@ from storyweaver import __version__
 from storyweaver.api.errors import register_error_handlers
 from storyweaver.api.gpu_endpoints import register_gpu_endpoints
 from storyweaver.api.middleware import REQUEST_ID_HEADER, request_id_middleware
-from storyweaver.api.routers import diagnostics, health
+from storyweaver.api.routers import diagnostics, health, stories
 from storyweaver.config import get_settings
+from storyweaver.services import build_services
 
 
 class StoryWeaverServer(gr.Server):
@@ -25,6 +28,22 @@ class StoryWeaverServer(gr.Server):
         if middleware_class is CustomCORSMiddleware:
             return
         super().add_middleware(middleware_class, *args, **kwargs)
+
+
+@asynccontextmanager
+async def lifespan(app: Any) -> AsyncIterator[None]:
+    """Build long-lived services (DB, Redis, Groq, job worker) and close them on shutdown.
+
+    Under gr.Server.launch(), Gradio replaces the constructor's lifespan, so app.py must also pass this
+    function via launch(app_kwargs={"lifespan": lifespan}); the constructor argument covers TestClient.
+    """
+    services = build_services(get_settings())
+    app.state.services = services
+    services.start_worker()
+    try:
+        yield
+    finally:
+        await services.close()
 
 
 def create_app() -> gr.Server:
@@ -44,6 +63,7 @@ def create_app() -> gr.Server:
         openapi_url="/openapi.json" if is_local else None,
         docs_url="/docs" if is_local else None,
         redoc_url=None,
+        lifespan=lifespan,
     )
 
     app.add_middleware(
@@ -58,5 +78,6 @@ def create_app() -> gr.Server:
 
     app.include_router(health.router)
     app.include_router(diagnostics.router)
+    app.include_router(stories.router)
     register_gpu_endpoints(app)
     return app

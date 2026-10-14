@@ -6,7 +6,9 @@ pytestmark = pytest.mark.unit
 
 def test_health_endpoints_need_no_api_key(client: TestClient) -> None:
     assert client.get("/health/live").json() == {"status": "ok"}
-    assert client.get("/health/ready").json() == {"status": "ready"}
+    ready = client.get("/health/ready").json()
+    assert ready["status"] == "ready"
+    assert ready["checks"] == {"database": "not_configured", "redis": "not_configured", "worker": "disabled"}
 
 
 @pytest.mark.parametrize("headers", [{}, {"X-API-Key": "wrong"}])

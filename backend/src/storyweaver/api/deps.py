@@ -2,10 +2,13 @@ import secrets
 from collections.abc import AsyncIterator
 from typing import Annotated
 
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from groq import AsyncGroq
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from storyweaver.config import Settings, get_settings
+from storyweaver.orchestrator.story_service import StoryService
+from storyweaver.services import Services
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 
@@ -39,3 +42,29 @@ async def get_groq_client(settings: SettingsDep) -> AsyncIterator[AsyncGroq]:
 
 
 GroqClientDep = Annotated[AsyncGroq, Depends(get_groq_client)]
+
+
+def get_services(request: Request) -> Services:
+    services: Services | None = getattr(request.app.state, "services", None)
+    return services if services is not None else Services()
+
+
+ServicesDep = Annotated[Services, Depends(get_services)]
+
+
+def get_story_service(services: ServicesDep) -> StoryService:
+    if services.stories is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Story storage is not configured.")
+    return services.stories
+
+
+StoryServiceDep = Annotated[StoryService, Depends(get_story_service)]
+
+
+def get_sessions(services: ServicesDep) -> async_sessionmaker[AsyncSession]:
+    if services.sessions is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Story storage is not configured.")
+    return services.sessions
+
+
+SessionsDep = Annotated[async_sessionmaker[AsyncSession], Depends(get_sessions)]

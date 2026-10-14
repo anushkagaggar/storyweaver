@@ -15,6 +15,10 @@ def _test_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setenv("STORYWEAVER_API_KEY", TEST_API_KEY)
     monkeypatch.setenv("GROQ_API_KEY", "gsk_test")
     monkeypatch.setenv("LLM_PLANNER", "groq:openai/gpt-oss-20b")
+    # Unit tests never touch real storage or start the background worker.
+    for name in ("DATABASE_URL", "REDIS_URL"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("WORKER_ENABLED", "false")
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
