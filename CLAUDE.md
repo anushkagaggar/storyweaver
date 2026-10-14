@@ -37,7 +37,7 @@ npm run dev ; npm run lint ; npm run typecheck ; npm run build
 
 # repo root: full local stack (api with GPU, web, postgres+pgvector, redis, SeaweedFS S3 on :8333)
 docker compose -f infra/docker-compose.yml --env-file .env up --build
-bash scripts/local_smoke.sh .env                                 # 26 end-to-end checks (REST, Gradio GPU endpoint, frontend); exits non-zero on failure
+bash scripts/local_smoke.sh .env                                 # 27 end-to-end checks (REST, Gradio GPU endpoint, frontend); exits non-zero on failure
 ```
 
 The user's rule is to test locally (unit tests plus the smoke script against the Docker stack) before deploying anything.
@@ -63,7 +63,7 @@ Pre-commit runs ruff, mypy (both as local hooks through `uv run`) and detect-sec
     - Callers use Gradio's two-step HTTP API (`frontend/lib/gradio.ts`) and send an HF token in `Authorization`, so ZeroGPU charges that account.
     - `@spaces.GPU` modules must be imported at startup (`gpu_endpoints.py` imports them).
     - HF installs `gradio[oauth,mcp]` on the Space; CI resolves that install set, so keep the lock compatible.
-    - Gradio adds its own CORS layer: unknown origins get HTTP 200 without `Access-Control-Allow-Origin`.
+    - Gradio's own CORS middleware reflects any origin on non-localhost hosts; `StoryWeaverServer` skips it so our `CORSMiddleware` is the only policy. Keep that override.
     - Open for V3: GPU work started by the job worker has no caller to charge quota to.
 11. **Child safety and privacy** (§6.6):
     - Input checks run in this order: rules, then Prompt Guard, then gpt-oss-safeguard against `safety/policy.md`. The full output story is checked as well.

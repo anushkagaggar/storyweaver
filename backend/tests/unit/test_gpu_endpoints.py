@@ -47,6 +47,18 @@ def test_gpu_check_runs_gpu_function_with_valid_key(monkeypatch: pytest.MonkeyPa
     assert calls == [True]
 
 
+def test_gradio_cors_middleware_is_skipped() -> None:
+    from fastapi.middleware.cors import CORSMiddleware
+    from gradio.route_utils import CustomCORSMiddleware
+
+    app = create_app()
+    app.add_middleware(CustomCORSMiddleware, strict_cors=True)  # what Gradio does inside launch()
+
+    classes = [m.cls for m in app.user_middleware]
+    assert CustomCORSMiddleware not in classes
+    assert CORSMiddleware in classes
+
+
 def test_app_is_gradio_server_without_rest_gpu_route(client: TestClient) -> None:
     assert isinstance(create_app(), gr.Server)
     assert client.get("/v1/gpu-check", headers={"X-API-Key": TEST_API_KEY}).status_code == 404

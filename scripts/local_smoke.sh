@@ -33,6 +33,9 @@ acao=$(curl -s -D - -o /dev/null -X OPTIONS $API/v1/echo -H 'Origin: https://evi
 check "CORS gives other origin no ACAO" "" "$acao"
 acao=$(curl -s -D - -o /dev/null -X OPTIONS $API/gradio_api/call/gpu_check -H 'Origin: https://evil.example' -H 'Access-Control-Request-Method: POST' | tr -d '\r' | awk -F': ' 'tolower($1)=="access-control-allow-origin"{print $2}')
 check "CORS (Gradio route) no ACAO"     "" "$acao"
+# Gradio's own CORS layer reflects any origin when Host is not localhost (as on the Space); simulate that host.
+acao=$(curl -s -D - -o /dev/null -X OPTIONS $API/v1/echo -H 'Host: storyweaver.hf.space' -H 'Origin: https://evil.example' -H 'Access-Control-Request-Method: POST' | tr -d '\r' | awk -F': ' 'tolower($1)=="access-control-allow-origin"{print $2}')
+check "CORS (Space host) no ACAO"       "" "$acao"
 check "unknown route -> 404"            404 "$(code -H "X-API-Key: $KEY" $API/v1/nope)"
 check "groq-check -> 200 (1 tiny call)" 200 "$(code -H "X-API-Key: $KEY" $API/v1/groq-check)"
 check "/docs available locally"         200 "$(code $API/docs)"

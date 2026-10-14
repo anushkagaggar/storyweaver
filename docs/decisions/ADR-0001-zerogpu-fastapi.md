@@ -56,8 +56,10 @@ Daily GPU quota per caller: anonymous about 2 min, free account 5 min, PRO 40 mi
   Docker, CI and the Space run the same code; GPU quota can be attributed to an account.
 - **GPU budget:** Vercel must hold a read-only `HF_TOKEN`. With a free account that is 5 GPU-min/day for the
   whole app, which is enough for V0–V2 diagnostics. Image generation (V3) will need careful budgeting or PRO.
-- **Two CORS layers:** Gradio adds its own CORS handling. A preflight from an unknown origin gets HTTP 200
-  but **no** `Access-Control-Allow-Origin`, so browsers still block it. The smoke test checks that header.
+- **CORS:** Gradio adds its own CORS middleware, which reflects *any* Origin (with credentials) when the host
+  is not localhost, and only defers to a parent app's `CORSMiddleware`, which Server mode never passes. Found
+  live on v0.0.4. `StoryWeaverServer` (in `api/main.py`) skips that middleware, so our `CORSMiddleware` is the
+  single policy. The smoke test simulates the Space host (`Host: *.hf.space`) to guard this.
 - **Gradio dependencies:** HF installs `gradio[oauth,mcp]` on every Gradio Space; our lock declares the same
   extras, and CI resolves the Space's install set (this caught the pydantic conflict in v0.0.2).
 - **Open question for V3:** image jobs are started by the in-process job worker, not by a caller, so there is
