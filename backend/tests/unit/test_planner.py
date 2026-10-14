@@ -1,0 +1,108 @@
+import json
+from typing import Any
+
+import pytest
+
+from storyweaver.llm.client import ChatMessage, LLMResult
+from storyweaver.llm.planner import PlanningError, StoryPlanner, StoryRequest
+from storyweaver.llm.schemas import PLANNED_STORY_SCHEMA
+
+pytestmark = pytest.mark.unit
+
+
+class FakeLLM:
+    """Returns queued responses and records every call."""
+
+    def __init__(self, *responses: str) -> None:
+        self.responses = list(responses)
+        self.calls: list[dict[str, Any]] = []
+
+    async def complete_json(
+        self,
+        *,
+        model: str,
+        messages: list[ChatMessage],
+        schema_name: str,
+        schema: dict[str, Any],
+        max_tokens: int,
+        temperature: float,
+    ) -> LLMResult:
+        self.calls.append(
+            {"model": model, "messages": messages, "schema_name": schema_name, "schema": schema}
+        )
+        return LLMResult(
+            content=self.responses.pop(0),
+            model=model,
+            prompt_tokens=100,
+            completion_tokens=200,
+            latency_ms=5.0,
+            finish_reason="stop",
+        )
+
+
+def _planner(llm: FakeLLM) -> StoryPlanner:
+    return StoryPlanner(
+        llm, planner_model="planner-model", repair_model="teacher-model", max_tokens=4000, temperature=0.7
+    )
+
+
+async def test_valid_first_attempt_needs_no_repair(planned_story: dict[str, Any]) -> None:
+    llm = FakeLLM(json.dumps(planned_story))
+
+    result = await _planner(llm).plan(StoryRequest(prompt="a brave dragon"), story_key="s1")
+
+    assert not result.repaired
+    assert result.story.title == "Pip and the Night Lights"
+    assert len(llm.calls) == 1
+    call = llm.calls[0]
+    assert call["model"] == "planner-model"
+    assert call["schema"] is PLANNED_STORY_SCHEMA
+    system, user = call["messages"]
+    assert "Exactly 5 scenes" in system.content and "40-120 words" in system.content
+    assert "<idea>\na brave dragon\n</idea>" in user.content
+
+
+async def test_rule_violation_triggers_one_repair_with_teacher(planned_story: dict[str, Any]) -> None:
+    broken = json.loads(json.dumps(planned_story))
+    broken["scenes"][0]["text"] = "Too short."
+    llm = FakeLLM(json.dumps(broken), json.dumps(planned_story))
+
+    result = await _planner(llm).plan(StoryRequest(prompt="x"), story_key="s1")
+
+    assert result.repaired
+    assert [c["model"] for c in llm.calls] == ["planner-model", "teacher-model"]
+    repair_messages = llm.calls[1]["messages"]
+    assert repair_messages[2].role == "assistant"
+    assert "Scene 1 text has 2 words" in repair_messages[3].content
+
+
+async def test_still_invalid_after_repair_raises(planned_story: dict[str, Any]) -> None:
+    broken = json.loads(json.dumps(planned_story))
+    broken["scenes"].pop()
+    llm = FakeLLM(json.dumps(broken), json.dumps(broken))
+
+    with pytest.raises(PlanningError) as info:
+        await _planner(llm).plan(StoryRequest(prompt="x"), story_key="s1")
+
+    assert any("exactly 5 scenes" in p for p in info.value.problems)
+    assert len(info.value.calls) == 2
+
+
+async def test_unparseable_json_is_repaired(planned_story: dict[str, Any]) -> None:
+    llm = FakeLLM("{not json", json.dumps(planned_story))
+
+    result = await _planner(llm).plan(StoryRequest(prompt="x"), story_key="s1")
+
+    assert result.repaired
+    assert "Invalid JSON" in llm.calls[1]["messages"][3].content
+
+
+async def test_six_scenes_requested(planned_story: dict[str, Any]) -> None:
+    from conftest import make_planned_story
+
+    llm = FakeLLM(json.dumps(make_planned_story(6)))
+
+    result = await _planner(llm).plan(StoryRequest(prompt="x", num_scenes=6), story_key="s1")
+
+    assert len(result.story.scenes) == 6
+    assert "Exactly 6 scenes" in llm.calls[0]["messages"][0].content
