@@ -37,6 +37,9 @@ uv run python app.py                                             # :7860 (/docs 
 # frontend/
 npm run dev ; npm run lint ; npm run typecheck ; npm test ; npm run build   # npm test = Vitest (tests/*.test.ts)
 
+# mcp_server/ (own uv project; thin adapter over /v1, plan §6.7)
+uv run pytest ; uv run mcp dev server.py   # tests (real MCP protocol in memory, API mocked); MCP Inspector
+
 # repo root: full local stack (api with GPU, web, postgres+pgvector, redis, SeaweedFS S3 on :8333)
 docker compose -f infra/docker-compose.yml --env-file .env up --build
 bash scripts/local_smoke.sh .env                                 # 33 end-to-end checks (REST, Gradio GPU endpoint, frontend); exits non-zero on failure

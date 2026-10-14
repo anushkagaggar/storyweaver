@@ -1,0 +1,45 @@
+[project]
+name = "storyweaver-mcp"
+version = "0.1.0"
+description = "StoryWeaver MCP server: a thin adapter over the StoryWeaver REST API (plan §6.7)"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "mcp>=1.30,<2",  # code verified against the 1.x API (as the backend uses); 2.x is a deliberate upgrade
+    "httpx>=0.28",
+]
+
+[dependency-groups]
+dev = [
+    "mcp[cli]>=1.30,<2",
+    "pytest>=9.1",
+    "pytest-asyncio>=1.4",
+    "respx>=0.23",
+    "ruff>=0.12",
+    "mypy>=1.15",
+]
+
+[tool.uv]
+# Run as scripts from this folder (`uv run server.py`); nothing is installed as a package.
+package = false
+# Same supply-chain guard as the backend: only releases at least two weeks old.
+exclude-newer = "2026-09-29T00:00:00Z"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "ASYNC", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["server.py", "client.py"]
