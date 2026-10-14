@@ -376,7 +376,7 @@ The MCP server is a **thin adapter over the FastAPI API**. It contains no busine
 
 **Cross-cutting rules**
 - An API key in the `X-API-Key` header, sent from the Vercel server side only.
-- CORS allows only the Vercel domain and `localhost`.
+- CORS allows only the Vercel domain and `localhost` (app level). **On HF Spaces the `*.hf.space` proxy adds permissive CORS to every response**, so CORS is not an access control there: the `X-API-Key` is. The key stays server-side, and the API never uses cookies or ambient credentials (ADR-0001).
 - RFC 7807 problem+json error bodies.
 - An `X-Request-ID` on every request.
 - An `Idempotency-Key` on POSTs.
@@ -761,6 +761,7 @@ Every version follows the **release process in §11**. Each version lists **buil
 | 19 | Free services idle out (Space after 48 h; Neon scales to zero; R2 card requirement unknown) | Provider docs | Keep-alive cron before demos; cold-start UI message; SeaweedFS S3 stays available locally |
 | 20 | Licence traps | HF model cards | Only models in §2; licences recorded in model cards |
 | 21 | Open-source infrastructure images withdrawn or relicensed (MinIO removed from Docker Hub, 2025) | `docker pull minio/minio` fails, 13 Oct 2026 | Pin exact image tags; reach storage only through the S3 API via one `S3BlobStore`, so the backing service (SeaweedFS, R2, or another S3-compatible store) can be swapped through `.env` |
+| 22 | HF's `*.hf.space` proxy reflects any Origin in CORS headers; app CORS cannot restrict browsers | Verified live, 14 Oct 2026 | API key is the access control, held only by the Vercel server; no cookie/ambient auth; app-level CORS kept for local/non-HF hosting |
 
 ---
 

@@ -60,6 +60,12 @@ Daily GPU quota per caller: anonymous about 2 min, free account 5 min, PRO 40 mi
   is not localhost, and only defers to a parent app's `CORSMiddleware`, which Server mode never passes. Found
   live on v0.0.4. `StoryWeaverServer` (in `api/main.py`) skips that middleware, so our `CORSMiddleware` is the
   single policy. The smoke test simulates the Space host (`Host: *.hf.space`) to guard this.
+- **HF's proxy overrides CORS anyway** (verified on v0.0.5, 14 Oct 2026): the `*.hf.space` edge answers
+  preflights itself and adds `Access-Control-Allow-Origin: <any origin>` and `expose-headers: *` to every
+  response, including paths that don't exist. It does not set `allow-credentials`. A Space cannot change this.
+  **So on HF, CORS is not an access control: the `X-API-Key` is.** Rules that follow: the key never reaches
+  a browser (only the Vercel server holds it), and the API never uses cookies or other ambient credentials.
+  Our own CORS policy stays for local runs and any future non-HF hosting.
 - **Gradio dependencies:** HF installs `gradio[oauth,mcp]` on every Gradio Space; our lock declares the same
   extras, and CI resolves the Space's install set (this caught the pydantic conflict in v0.0.2).
 - **Open question for V3:** image jobs are started by the in-process job worker, not by a caller, so there is

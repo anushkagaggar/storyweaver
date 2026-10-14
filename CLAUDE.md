@@ -64,6 +64,7 @@ Pre-commit runs ruff, mypy (both as local hooks through `uv run`) and detect-sec
     - `@spaces.GPU` modules must be imported at startup (`gpu_endpoints.py` imports them).
     - HF installs `gradio[oauth,mcp]` on the Space; CI resolves that install set, so keep the lock compatible.
     - Gradio's own CORS middleware reflects any origin on non-localhost hosts; `StoryWeaverServer` skips it so our `CORSMiddleware` is the only policy. Keep that override.
+    - On HF the `*.hf.space` proxy adds permissive CORS to every response anyway, so **CORS is not an access control there; `X-API-Key` is**. Never expose the key to browsers or add cookie/ambient auth.
     - Open for V3: GPU work started by the job worker has no caller to charge quota to.
 11. **Child safety and privacy** (§6.6):
     - Input checks run in this order: rules, then Prompt Guard, then gpt-oss-safeguard against `safety/policy.md`. The full output story is checked as well.
