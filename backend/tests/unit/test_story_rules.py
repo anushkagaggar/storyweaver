@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from storyweaver.domain.readability import count_syllables, flesch_kincaid_grade
-from storyweaver.domain.story import Story, character_seed, story_problems
+from storyweaver.domain.story import Story, character_seed, idea_name_words, story_problems
 from storyweaver.llm.schemas import PlannedStory
 
 pytestmark = pytest.mark.unit
@@ -42,7 +42,14 @@ def test_scene_indices_must_be_consecutive(planned_story: dict[str, Any]) -> Non
 
 
 @pytest.mark.parametrize(
-    ("text", "fragment"), [("Too short.", "has 2 words"), ("word " * 121, "has 121 words")]
+    ("text", "fragment"),
+    [
+        ("Too short.", "has 2 words"),
+        ("Too short.", "Add 9 more short sentences"),
+        ("word " * 39, "has 39 words; it must have 40-120 words. Add 4 more short sentences"),
+        ("word " * 121, "has 121 words"),
+        ("word " * 121, "Remove about 8 sentences"),
+    ],
 )
 def test_scene_word_limits(planned_story: dict[str, Any], text: str, fragment: str) -> None:
     planned_story["scenes"][0]["text"] = text
@@ -105,3 +112,16 @@ def test_flesch_kincaid_orders_easy_below_hard() -> None:
 
     assert flesch_kincaid_grade(easy) < 4 < flesch_kincaid_grade(hard)
     assert flesch_kincaid_grade("") == 0.0
+
+
+def test_idea_name_words_skip_common_words() -> None:
+    assert idea_name_words("a story about Tom and Jerry!") == {"tom", "jerry"}
+    assert idea_name_words("Peppa Pig goes to the beach") == {"peppa", "pig", "beach"}
+
+
+def test_banned_name_words_only_check_character_names(planned_story: dict[str, Any]) -> None:
+    story = _story(planned_story)
+
+    assert story_problems(story, 5, banned_name_words=frozenset({"dark"})) == []  # only in scene text
+    problems = story_problems(story, 5, banned_name_words=frozenset({"pip"}))
+    assert any("Character name 'Pip'" in p for p in problems)

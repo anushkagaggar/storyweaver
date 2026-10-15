@@ -17,7 +17,7 @@ from storyweaver.orchestrator.story_service import (
     SafetyUnavailableError,
     UnsafeInputError,
 )
-from storyweaver.safety.guards import INPUT_REJECTED_MESSAGE
+from storyweaver.safety.guards import BRANDS
 from storyweaver.storage.models import StoryStatus
 from storyweaver.storage.repositories import StoryRepository
 
@@ -65,6 +65,12 @@ class SceneOut(BaseModel):
     audio_url: str | None = None  # V2
 
 
+# Parent-facing notes for adapted ideas (stories.adaptation).
+ADAPTATION_NOTICES = {
+    BRANDS: "Your idea named characters we can't use, so we made up our own characters inspired by it.",
+}
+
+
 class StoryError(BaseModel):
     code: str
     detail: str | None
@@ -80,6 +86,7 @@ class StoryOut(BaseModel):
     setting: str | None
     characters: list[CharacterOut]
     scenes: list[SceneOut]
+    notice: str | None = None
     error: StoryError | None
     created_at: datetime
     updated_at: datetime
@@ -125,7 +132,7 @@ async def create_story(
         return problem_response(
             request,
             status.HTTP_422_UNPROCESSABLE_CONTENT,
-            INPUT_REJECTED_MESSAGE,
+            verdict.message,
             extra={"code": "unsafe_input", "category": verdict.category, "reason": verdict.reason},
         )
     except SafetyUnavailableError as exc:
@@ -174,6 +181,7 @@ async def get_story(story_id: uuid.UUID, sessions: SessionsDep) -> StoryOut:
             SceneOut(idx=s.idx, text=s.text, lines=[Line.model_validate(line) for line in s.lines])
             for s in (story.scenes if visible else [])
         ],
+        notice=ADAPTATION_NOTICES.get(story.adaptation or "") if visible else None,
         error=StoryError(code=story.error_code, detail=story.error_detail) if story.error_code else None,
         created_at=story.created_at,
         updated_at=story.updated_at,

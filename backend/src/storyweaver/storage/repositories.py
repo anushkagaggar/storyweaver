@@ -22,6 +22,7 @@ class StoryRepository:
         num_scenes: int,
         idempotency_key: str | None = None,
         request_hash: str | None = None,
+        adaptation: str | None = None,
     ) -> StoryRow:
         row = StoryRow(
             prompt_text=prompt_text,
@@ -30,6 +31,7 @@ class StoryRepository:
             status=StoryStatus.QUEUED,
             idempotency_key=idempotency_key,
             request_hash=request_hash,
+            adaptation=adaptation,
         )
         self._session.add(row)
         await self._session.flush()

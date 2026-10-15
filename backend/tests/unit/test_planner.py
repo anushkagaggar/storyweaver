@@ -126,3 +126,31 @@ async def test_provider_json_failure_goes_through_the_repair_call(planned_story:
     repair = llm.calls[1]["messages"]
     assert repair[2].content == '{"title": "Half'  # the partial generation is sent back for repair
     assert "Invalid JSON" in repair[3].content
+
+
+async def test_adapted_idea_gets_explicit_instruction(planned_story: dict[str, Any]) -> None:
+    llm = FakeLLM(json.dumps(planned_story))
+
+    await _planner(llm).plan(StoryRequest(prompt="Tom and Jerry", adaptation="brands"), story_key="s1")
+
+    user = llm.calls[0]["messages"][1].content
+    assert "names brands or trademarked characters" in user and "invent original characters" in user
+
+
+async def test_ordinary_idea_has_no_brand_instruction(planned_story: dict[str, Any]) -> None:
+    llm = FakeLLM(json.dumps(planned_story))
+
+    await _planner(llm).plan(StoryRequest(prompt="a brave dragon"), story_key="s1")
+
+    assert "trademarked" not in llm.calls[0]["messages"][1].content
+
+
+async def test_borrowed_character_name_is_sent_to_repair(planned_story: dict[str, Any]) -> None:
+    # The sample story's dragon is called Pip: an adapted idea naming "Pip" must not keep that name.
+    llm = FakeLLM(json.dumps(planned_story), json.dumps(planned_story))
+
+    with pytest.raises(PlanningError) as caught:
+        await _planner(llm).plan(StoryRequest(prompt="Pip the dragon", adaptation="brands"), story_key="s1")
+
+    assert any("uses ['pip'] from the idea" in problem for problem in caught.value.problems)
+    assert "Invent a new, original name" in llm.calls[1]["messages"][3].content

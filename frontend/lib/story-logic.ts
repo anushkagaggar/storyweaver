@@ -24,6 +24,15 @@ export function statusMessage(status: StoryStatus): string {
   }
 }
 
+/** The smaller line under the status heading: what to expect while waiting. */
+export function statusHint(status: StoryStatus): string {
+  if (status === "checking") {
+    // The free-tier safety model allows only a few checks a minute, so this step can wait up to about a minute.
+    return "Every story gets a safety check before you see it. When lots of stories are being made, this can take up to a minute.";
+  }
+  return "This usually takes under a minute, sometimes two when it's busy.";
+}
+
 /** Client-side check that mirrors the API, so obvious mistakes never leave the browser. */
 export function validatePrompt(raw: string): string | null {
   const prompt = raw.trim().replace(/\s+/g, " ");

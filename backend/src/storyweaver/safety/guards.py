@@ -4,6 +4,10 @@ Input (before a story is created), in order, stopping at the first block:
   1. rules (safety/rules.py), 2. Prompt Guard 2 (prompt injection), 3. gpt-oss-safeguard against policy.md.
 Output (after planning): gpt-oss-safeguard on the finished story.
 
+Brands redirect instead of refusing: an idea that names a brand or trademarked character (e.g. a famous
+cartoon pair) is allowed with `adaptation="brands"`, the planner swaps in original characters, and the
+output check still rejects any brand left in the finished story.
+
 Fail closed: if a guard model is unavailable or out of quota, nothing is let through; callers turn the
 exception into a "try again later" response.
 """
@@ -27,6 +31,29 @@ POLICY = (Path(__file__).parent / "policy.md").read_text(encoding="utf-8")
 Stage = Literal["rules", "prompt_guard", "policy"]
 
 INPUT_REJECTED_MESSAGE = "This story idea can't be used. Try a gentle, kind idea."
+
+# What a parent sees for each blocked category: why, and what to try instead. Unknown categories get
+# INPUT_REJECTED_MESSAGE. Rule matches ("rules" stage) carry their own reason, which is shown instead.
+INPUT_CATEGORY_MESSAGES: dict[str, str] = {
+    "violence": "Our stories stay gentle, so fighting, weapons and getting hurt are left out. "
+    "Try an idea about solving a problem together.",
+    "death": "Our stories leave out dying and death. Try an idea about a big change, like moving home.",
+    "romance": "Our stories leave out crushes and romance. Try an idea about friendship instead.",
+    "sexual": "This idea isn't suitable for young children. Please try a different idea.",
+    "self_harm_or_drugs": "This idea includes topics that aren't suitable for young children. "
+    "Please try a different idea.",
+    "hate": "Our stories are kind to everyone. Try an idea about being different and being friends.",
+    "real_people": "We can't make stories about real people. Try a made-up character instead, "
+    "like a bunny who dreams of being a singer.",
+    "urls": "Links and web addresses can't be used in a story idea.",
+    "personal_data": "Please leave out personal details like addresses, phone numbers or school names. "
+    "A first name is fine.",
+    "scary": "Bedtime stories here stay cosy, not scary. Try a small adventure, like getting lost "
+    "and finding the way home.",
+    "prompt_injection": "Please describe a story idea, not instructions for the storyteller.",
+}
+
+BRANDS = "brands"
 OUTPUT_REJECTED_MESSAGE = "This story didn't pass our safety check. Please try a different idea."
 
 
@@ -36,6 +63,14 @@ class SafetyVerdict:
     stage: Stage | None = None
     category: str | None = None
     reason: str | None = None
+    adaptation: str | None = None  # allowed, but the planner must change the idea (e.g. "brands")
+
+    @property
+    def message(self) -> str:
+        """The parent-facing explanation for a blocked idea."""
+        if self.stage == "rules" and self.reason:
+            return self.reason
+        return INPUT_CATEGORY_MESSAGES.get(self.category or "", INPUT_REJECTED_MESSAGE)
 
 
 ALLOWED = SafetyVerdict(allowed=True)
@@ -50,6 +85,7 @@ class PolicyVerdict(BaseModel):
 
     violation: Literal[0, 1]
     category: str | None
+    brand_mentioned: Literal[0, 1]
     rationale: str
 
 
@@ -85,9 +121,22 @@ class PolicyChecker:
             verdict = PolicyVerdict.model_validate_json(result.content)
         except ValidationError as exc:
             raise SafetyCheckError("Safeguard returned an invalid verdict.") from exc
+        if kind == "story idea":
+            return self._idea_verdict(verdict)
         if verdict.violation == 1:
             logger.info("Policy check rejected a %s (category=%s).", kind, verdict.category)
             return SafetyVerdict(False, "policy", verdict.category or "policy", verdict.rationale)
+        return ALLOWED
+
+    @staticmethod
+    def _idea_verdict(verdict: PolicyVerdict) -> SafetyVerdict:
+        # A brand alone never blocks an idea, even if the model labels it a violation: it is adapted instead.
+        if verdict.violation == 1 and verdict.category != BRANDS:
+            logger.info("Policy check rejected a story idea (category=%s).", verdict.category)
+            return SafetyVerdict(False, "policy", verdict.category or "policy", verdict.rationale)
+        if verdict.brand_mentioned == 1 or verdict.category == BRANDS:
+            logger.info("Story idea names a brand; the planner will use original characters.")
+            return SafetyVerdict(True, adaptation=BRANDS)
         return ALLOWED
 
 

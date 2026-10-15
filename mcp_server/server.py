@@ -35,7 +35,9 @@ STORY_PROGRESS = {
         "The story is written and is waiting for its safety check. On the free tier this can take a minute "
         "or two when busy. Keep checking; the title and pages appear once it is ready."
     ),
-    "ready": "The story is ready. Read it page by page, then share its moral.",
+    "ready": (
+        "The story is ready. Share its notice first, if any. Read it page by page, then share its moral."
+    ),
     "failed": "The story could not be made. Share the error detail and suggest a different, gentle idea.",
 }
 

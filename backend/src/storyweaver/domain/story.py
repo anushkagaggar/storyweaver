@@ -6,6 +6,8 @@ send them back to the LLM in a single repair call.
 """
 
 import hashlib
+import math
+import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -18,6 +20,8 @@ SceneCount = Literal[5, 6]
 NARRATOR = "narrator"
 MIN_SCENE_WORDS = 40
 MAX_SCENE_WORDS = 120
+TARGET_SCENE_WORDS = 65
+WORDS_PER_SHORT_SENTENCE = 7
 MAX_FK_GRADE = 4.0
 
 
@@ -77,8 +81,35 @@ def character_seed(story_key: str, character_id: str) -> int:
     return int.from_bytes(digest[:4], "big") & 0x7FFFFFFF
 
 
-def story_problems(story: Story, expected_scenes: int) -> list[str]:
-    """Content rules from plan §6.1. Returns an empty list when the story is acceptable."""
+def _length_fix(words: int) -> str:
+    """Concrete repair advice in sentences, which models follow far better than word counts."""
+    if words < MIN_SCENE_WORDS:
+        sentences = max(2, math.ceil((TARGET_SCENE_WORDS - words) / WORDS_PER_SHORT_SENTENCE))
+        return f"Add {sentences} more short sentences to it (aim for about {TARGET_SCENE_WORDS} words)."
+    sentences = max(1, math.ceil((words - TARGET_SCENE_WORDS) / WORDS_PER_SHORT_SENTENCE))
+    return f"Remove about {sentences} sentences from it (aim for about {TARGET_SCENE_WORDS} words)."
+
+
+# Words too common to be a borrowed name; other words in an adapted idea are off-limits for character names.
+_COMMON_WORDS = frozenset(
+    "a an and are about at be by for from goes go has have her his in into is it its of on or our story the "
+    "their them they to tale who with".split()
+)
+
+
+def idea_name_words(idea: str) -> frozenset[str]:
+    """Words a character must not be named after when the idea was adapted (e.g. "Tom", "Jerry", "Peppa")."""
+    return frozenset(w for w in re.findall(r"[a-z]+", idea.lower()) if len(w) >= 3 and w not in _COMMON_WORDS)
+
+
+def story_problems(
+    story: Story, expected_scenes: int, *, banned_name_words: frozenset[str] = frozenset()
+) -> list[str]:
+    """Content rules from plan §6.1. Returns an empty list when the story is acceptable.
+
+    `banned_name_words`: for ideas that named brands or trademarked characters, words from the idea that no
+    character name may use, so the story gets original characters.
+    """
     problems: list[str] = []
 
     if len(story.scenes) != expected_scenes:
@@ -93,6 +124,13 @@ def story_problems(story: Story, expected_scenes: int) -> list[str]:
         problems.append(f"Character ids must be unique; got {character_ids}.")
     if NARRATOR in character_ids:
         problems.append(f"'{NARRATOR}' is reserved for the narrator and cannot be a character id.")
+    for character in story.characters:
+        borrowed = sorted(set(re.findall(r"[a-z]+", character.name.lower())) & banned_name_words)
+        if borrowed:
+            problems.append(
+                f"Character name '{character.name}' uses {borrowed} from the idea, which names a brand or "
+                "trademarked character. Invent a new, original name and use it everywhere in the story."
+            )
     known = set(character_ids)
 
     for scene in story.scenes:
@@ -100,7 +138,7 @@ def story_problems(story: Story, expected_scenes: int) -> list[str]:
         if not MIN_SCENE_WORDS <= words <= MAX_SCENE_WORDS:
             problems.append(
                 f"Scene {scene.idx} text has {words} words; it must have "
-                f"{MIN_SCENE_WORDS}-{MAX_SCENE_WORDS} words."
+                f"{MIN_SCENE_WORDS}-{MAX_SCENE_WORDS} words. {_length_fix(words)}"
             )
         unknown_characters = sorted(set(scene.characters) - known)
         if unknown_characters:

@@ -263,8 +263,31 @@ def test_unsafe_idea_is_rejected_and_never_stored(client: TestClient, input_guar
     assert response.status_code == 422
     problem = response.json()
     assert (problem["code"], problem["category"]) == ("unsafe_input", "violence")
-    assert "gentle, kind idea" in problem["detail"]
+    assert "fighting, weapons and getting hurt" in problem["detail"]
     assert client.get("/health/ready").status_code == 200
+
+
+async def test_brand_idea_is_adapted_and_the_reader_is_told(
+    client: TestClient, input_guard: StubGuard, db: Sessions
+) -> None:
+    input_guard.verdict = SafetyVerdict(True, adaptation="brands")
+    created = _create(client, {"prompt": "a story about Tom and Jerry"}).json()
+
+    queued = client.get(f"/v1/stories/{created['story_id']}", headers=API_KEY).json()
+    await _worker(db, StubLLM()).run_once()
+    story = client.get(f"/v1/stories/{created['story_id']}", headers=API_KEY).json()
+
+    assert queued["notice"] is None  # shown with the story, never before the output check
+    assert story["status"] == "ready"
+    assert "made up our own characters" in story["notice"]
+
+
+async def test_ordinary_story_has_no_notice(client: TestClient, db: Sessions) -> None:
+    created = _create(client).json()
+
+    await _worker(db, StubLLM()).run_once()
+
+    assert client.get(f"/v1/stories/{created['story_id']}", headers=API_KEY).json()["notice"] is None
 
 
 async def test_unsafe_idea_leaves_no_rows(client: TestClient, input_guard: StubGuard, db: Sessions) -> None:

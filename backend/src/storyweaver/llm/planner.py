@@ -13,6 +13,7 @@ from storyweaver.domain.story import (
     AgeBand,
     SceneCount,
     Story,
+    idea_name_words,
     story_problems,
 )
 from storyweaver.llm.client import ChatMessage, LLMClient, LLMInvalidOutputError, LLMResult
@@ -29,6 +30,11 @@ class StoryRequest:
     prompt: str
     age_band: AgeBand = "4-6"
     num_scenes: SceneCount = 5
+    adaptation: str | None = None  # "brands": the idea names brands or trademarked characters
+
+    @property
+    def banned_name_words(self) -> frozenset[str]:
+        return idea_name_words(self.prompt) if self.adaptation == "brands" else frozenset()
 
 
 @dataclass(frozen=True)
@@ -80,7 +86,7 @@ class StoryPlanner:
         """Plan a story. `story_key` (e.g. the story id) makes character seeds deterministic."""
         messages = [
             ChatMessage("system", self._system_prompt(request)),
-            ChatMessage("user", f"Story idea from the parent:\n<idea>\n{request.prompt}\n</idea>"),
+            ChatMessage("user", self._idea_message(request)),
         ]
         first = await self._call(self._planner_model, messages)
         story, problems = self._evaluate(first.content, request, story_key)
@@ -108,6 +114,16 @@ class StoryPlanner:
 
         logger.warning("Planner output still rejected after repair. Problems: %s", problems)
         raise PlanningError(problems=problems, calls=[first, second])
+
+    @staticmethod
+    def _idea_message(request: StoryRequest) -> str:
+        message = f"Story idea from the parent:\n<idea>\n{request.prompt}\n</idea>"
+        if request.adaptation == "brands":
+            message += (
+                "\n\nThis idea names brands or trademarked characters. Keep its spirit, but invent original "
+                "characters: new names (not any name or word from the idea) and their own look."
+            )
+        return message
 
     def _system_prompt(self, request: StoryRequest) -> str:
         return self._system_template.format(
@@ -153,7 +169,7 @@ class StoryPlanner:
             story = planned.to_story(age_band=request.age_band, story_key=story_key)
         except ValidationError as error:
             return None, _format_validation_error(error)
-        return story, story_problems(story, request.num_scenes)
+        return story, story_problems(story, request.num_scenes, banned_name_words=request.banned_name_words)
 
 
 def story_to_json(story: Story) -> str:

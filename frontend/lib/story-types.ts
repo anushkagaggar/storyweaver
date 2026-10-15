@@ -24,6 +24,8 @@ export type Story = {
   setting: string | null;
   characters: Character[];
   scenes: Scene[];
+  /** Set when the idea was adapted before writing, e.g. named characters replaced with original ones. */
+  notice: string | null;
   error: { code: string; detail: string | null } | null;
   created_at: string;
   updated_at: string;

@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 
 import { StoryBook } from "@/components/StoryBook";
 import { fetchStory } from "@/lib/story-client";
-import { FINAL_STATUSES, pollDelayMs, statusMessage } from "@/lib/story-logic";
+import { FINAL_STATUSES, pollDelayMs, statusHint, statusMessage } from "@/lib/story-logic";
 import type { Story } from "@/lib/story-types";
 
 type View =
@@ -45,6 +45,11 @@ export function StoryViewer({ id }: { id: string }) {
   if (view.kind === "story" && view.story.status === "ready") {
     return (
       <>
+        {view.story.notice && (
+          <p className="notice" role="note">
+            {view.story.notice}
+          </p>
+        )}
         <StoryBook story={view.story} />
         <p className="again">
           <Link href="/">Make another story</Link>
@@ -78,7 +83,7 @@ export function StoryViewer({ id }: { id: string }) {
       <div className="spinner" aria-hidden="true" />
       <h1>{statusMessage(status)}</h1>
       <p className="hint">
-        {view.kind === "error" ? view.message : "This usually takes under a minute, sometimes two when it's busy."}
+        {view.kind === "error" ? view.message : statusHint(status)}
       </p>
     </div>
   );

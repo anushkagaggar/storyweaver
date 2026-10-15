@@ -84,6 +84,8 @@ class StoryRow(_Timestamps, Base):
     # Idempotency for POST /v1/stories: the same key with the same request returns the same story.
     idempotency_key: Mapped[str | None] = mapped_column(String(128), unique=True)
     request_hash: Mapped[str | None] = mapped_column(String(64))
+    # Set when the idea was adapted before planning, e.g. "brands": named characters became original ones.
+    adaptation: Mapped[str | None] = mapped_column(String(32))
 
     characters: Mapped[list["CharacterRow"]] = relationship(
         back_populates="story", cascade="all, delete-orphan", order_by="CharacterRow.position"

@@ -7,12 +7,14 @@ from story_samples import make_planned_story
 from storyweaver.llm.client import ChatMessage, LLMResult
 from storyweaver.llm.schemas import PlannedStory
 from storyweaver.safety.guards import (
+    INPUT_REJECTED_MESSAGE,
     POLICY,
     GuardModels,
     InputGuard,
     OutputGuard,
     PolicyChecker,
     SafetyCheckError,
+    SafetyVerdict,
     story_for_review,
 )
 from storyweaver.safety.rules import check_rules
@@ -54,12 +56,14 @@ def test_rules_block_clear_violations(idea: str, category: str) -> None:
     assert match is not None and match.category == category
 
 
+def _verdict(violation: int, category: str | None, brand: int) -> dict[str, Any]:
+    return {"violation": violation, "category": category, "brand_mentioned": brand, "rationale": "r"}
+
+
 class FakeLLM:
     def __init__(self, *, score: str = "0.001", verdict: dict[str, Any] | str | None = None) -> None:
         self.score = score
-        self.verdict = (
-            verdict if verdict is not None else {"violation": 0, "category": None, "rationale": "ok"}
-        )
+        self.verdict = verdict if verdict is not None else _verdict(0, None, 0)
         self.calls: list[tuple[str, list[ChatMessage]]] = []
 
     async def complete_text(self, *, model: str, messages: list[ChatMessage], max_tokens: int) -> LLMResult:
@@ -108,7 +112,7 @@ async def test_prompt_injection_stops_before_policy_check() -> None:
 
 
 async def test_policy_violation_is_rejected_with_category() -> None:
-    llm = FakeLLM(verdict={"violation": 1, "category": "real_people", "rationale": "A real singer."})
+    llm = FakeLLM(verdict={**_verdict(1, "real_people", 0), "rationale": "A real singer."})
 
     verdict = await _input_guard(llm).check("a story about a famous pop star")
 
@@ -139,3 +143,58 @@ def test_policy_size_stays_in_recommended_range() -> None:
     approx_tokens = len(POLICY) // 4  # Groq recommends 400-600 tokens for safeguard policies
 
     assert 400 <= approx_tokens <= 650
+
+
+async def test_brand_in_idea_is_adapted_not_refused() -> None:
+    llm = FakeLLM(verdict=_verdict(0, None, 1))
+
+    verdict = await _input_guard(llm).check("a story about Tom and Jerry")
+
+    assert verdict.allowed and verdict.adaptation == "brands"
+
+
+async def test_brand_labelled_as_violation_in_idea_is_still_adapted() -> None:
+    llm = FakeLLM(verdict=_verdict(1, "brands", 1))
+
+    verdict = await _input_guard(llm).check("a story about Tom and Jerry")
+
+    assert verdict.allowed and verdict.adaptation == "brands"
+
+
+async def test_brand_with_another_violation_is_refused_for_that_violation() -> None:
+    llm = FakeLLM(verdict=_verdict(1, "violence", 1))
+
+    verdict = await _input_guard(llm).check("Tom and Jerry hit each other with pans")
+
+    assert not verdict.allowed and verdict.category == "violence"
+    assert "gentle" in verdict.message
+
+
+async def test_brand_in_finished_story_is_rejected() -> None:
+    story = PlannedStory.model_validate(make_planned_story()).to_story(age_band="4-6", story_key="k")
+    llm = FakeLLM(verdict=_verdict(1, "brands", 1))
+
+    verdict = await OutputGuard(PolicyChecker(llm, MODELS)).check(story)
+
+    assert not verdict.allowed and verdict.category == "brands"
+
+
+async def test_safe_idea_has_no_adaptation() -> None:
+    verdict = await _input_guard(FakeLLM()).check("a hedgehog learns to swim")
+
+    assert verdict.allowed and verdict.adaptation is None
+
+
+@pytest.mark.parametrize(
+    ("verdict", "expected"),
+    [
+        (SafetyVerdict(False, "policy", "real_people"), "real people"),
+        (SafetyVerdict(False, "policy", "scary"), "cosy"),
+        (SafetyVerdict(False, "prompt_guard", "prompt_injection"), "not instructions"),
+        (SafetyVerdict(False, "rules", "urls", "Links can't be used."), "Links can't be used."),
+        (SafetyVerdict(False, "policy", "something_new"), INPUT_REJECTED_MESSAGE),
+        (SafetyVerdict(False, "policy", None), INPUT_REJECTED_MESSAGE),
+    ],
+)
+def test_each_blocked_category_explains_itself(verdict: SafetyVerdict, expected: str) -> None:
+    assert expected in verdict.message

@@ -5,6 +5,7 @@ import {
   parseRetryAfter,
   pollDelayMs,
   problemMessage,
+  statusHint,
   statusMessage,
   UUID_PATTERN,
   validatePrompt,
@@ -27,6 +28,13 @@ describe("statusMessage", () => {
     }
     expect(FINAL_STATUSES.has("ready")).toBe(true);
     expect(FINAL_STATUSES.has("checking")).toBe(false);
+  });
+});
+
+describe("statusHint", () => {
+  it("explains the safety-check wait only while checking", () => {
+    expect(statusHint("checking")).toMatch(/safety check.*up to a minute/);
+    expect(statusHint("planning")).toMatch(/under a minute/);
   });
 });
 

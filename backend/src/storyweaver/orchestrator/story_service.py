@@ -92,7 +92,7 @@ class StoryService:
             existing = await self._replay(idempotency_key, digest)
             if existing is not None:
                 return existing  # this exact request already passed the safety check
-        await self._check_input(prompt)
+        verdict = await self._check_input(prompt)
         try:
             async with self._sessions() as session, session.begin():
                 story = await StoryRepository(session).create(
@@ -101,6 +101,7 @@ class StoryService:
                     num_scenes=num_scenes,
                     idempotency_key=idempotency_key,
                     request_hash=digest,
+                    adaptation=verdict.adaptation,
                 )
                 job = await JobQueue(session).enqueue(
                     JobKind.PLAN, {"story_id": str(story.id)}, story_id=story.id
@@ -115,7 +116,7 @@ class StoryService:
                 raise
             return replay
 
-    async def _check_input(self, prompt: str) -> None:
+    async def _check_input(self, prompt: str) -> SafetyVerdict:
         if self._input_guard is None:
             raise SafetyUnavailableError(60, "Safety checks are not configured.")
         try:
@@ -130,6 +131,7 @@ class StoryService:
             raise SafetyUnavailableError(30, "Safety check unavailable.") from exc
         if not verdict.allowed:
             raise UnsafeInputError(verdict)
+        return verdict
 
     async def _replay(self, key: str, digest: str) -> AcceptedStory | None:
         async with self._sessions() as session:
@@ -179,6 +181,7 @@ class PlanStoryJob:
                 prompt=row.prompt_text,
                 age_band=row.age_band,  # type: ignore[arg-type]  # validated on insert
                 num_scenes=row.num_scenes,  # type: ignore[arg-type]
+                adaptation=row.adaptation,
             )
 
         if planned is None:
