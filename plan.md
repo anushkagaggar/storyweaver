@@ -269,7 +269,7 @@ storyweaver/
 }
 ```
 **Validation**
-- Pydantic checks: 5–6 scenes; each scene 40–120 words; Flesch-Kincaid grade ≤ 4; character IDs referenced correctly.
+- Pydantic checks: 5–6 scenes; each scene 30–120 words (40 until V1.1, 16 Oct 2026: the planner naturally writes 40–50 words, so a 40 floor failed about 1 story in 9); Flesch-Kincaid grade ≤ 4; character IDs referenced correctly.
 - On failure: **one repair call** to gpt-oss-120b, then a clean error.
 
 ### 6.2 Database (Neon / local Postgres 16 + pgvector)

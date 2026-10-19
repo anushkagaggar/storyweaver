@@ -46,7 +46,7 @@ def test_scene_indices_must_be_consecutive(planned_story: dict[str, Any]) -> Non
     [
         ("Too short.", "has 2 words"),
         ("Too short.", "Add 9 more short sentences"),
-        ("word " * 39, "has 39 words; it must have 40-120 words. Add 4 more short sentences"),
+        ("word " * 29, "has 29 words; it must have 30-120 words. Add 6 more short sentences"),
         ("word " * 121, "has 121 words"),
         ("word " * 121, "Remove about 8 sentences"),
     ],

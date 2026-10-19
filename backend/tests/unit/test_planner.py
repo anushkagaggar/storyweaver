@@ -59,7 +59,7 @@ async def test_valid_first_attempt_needs_no_repair(planned_story: dict[str, Any]
     assert call["model"] == "planner-model"
     assert call["schema"] is PLANNED_STORY_SCHEMA
     system, user = call["messages"]
-    assert "Exactly 5 scenes" in system.content and "40-120 words" in system.content
+    assert "Exactly 5 scenes" in system.content and "30-120 words" in system.content
     assert "<idea>\na brave dragon\n</idea>" in user.content
 
 

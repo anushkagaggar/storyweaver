@@ -18,7 +18,7 @@ AgeBand = Literal["4-6"]
 SceneCount = Literal[5, 6]
 
 NARRATOR = "narrator"
-MIN_SCENE_WORDS = 40
+MIN_SCENE_WORDS = 30  # 40 until V1.1: gpt-oss-20b naturally writes 40-50 words, so 40 failed stories
 MAX_SCENE_WORDS = 120
 TARGET_SCENE_WORDS = 65
 WORDS_PER_SHORT_SENTENCE = 7

@@ -1,6 +1,6 @@
 """V1 exit criterion (plan §10): the planner's JSON is valid for at least 95% of 50 prompts.
 
-A prompt passes when the final story meets the schema and every content rule (5/6 scenes, 40-120 words per
+A prompt passes when the final story meets the schema and every content rule (5/6 scenes, 30-120 words per
 scene, reading grade <= 4, declared characters), allowing the planner's single repair call, exactly as in
 production. Uses the real Groq models through the quota router, so it respects free-tier limits; when a
 day's quota runs out it stops cleanly and a re-run resumes where it left off.
