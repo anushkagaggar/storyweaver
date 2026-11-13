@@ -32,3 +32,6 @@ mlruns/
 Thumbs.db
 .vscode/
 .idea/
+
+# Local-only working notes (kept out of git since 13 Nov 2026)
+handoff.md
