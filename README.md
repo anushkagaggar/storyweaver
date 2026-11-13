@@ -300,6 +300,7 @@ storyweaver/
 | `scripts/local_smoke.sh` | 37 end-to-end checks (incl. one real Whisper call) against the running stack; exits non-zero on failure |
 | `docs/decisions/ADR-0001-zerogpu-fastapi.md` | Why the app is a `gr.Server` with Gradio GPU endpoints alongside REST |
 | `docs/decisions/ADR-0002-redirect-brand-ideas.md` | Why brand ideas are adapted, not refused |
+| `docs/decisions/ADR-0003-pyav-gpl-ffmpeg.md` | Why PyAV's GPL-built FFmpeg is acceptable server-side (never distributed) |
 | `docs/groq-limits.md` | Groq free-tier limits per model, as configured in `routing/quotas.py` |
 | `docs/release-v1.md` | V1 release checklist (accounts, secrets, order of deploys) |
 | `.github/workflows/ci.yml` | CI: backend (ruff, mypy, unit + integration tests with Postgres/Redis, Space install check), frontend (lint, typecheck, test, build), MCP tests |
