@@ -42,7 +42,7 @@ uv run pytest ; uv run mcp dev server.py   # tests (real MCP protocol in memory,
 
 # repo root: full local stack (api with GPU, web, postgres+pgvector, redis, SeaweedFS S3 on :8333)
 docker compose -f infra/docker-compose.yml --env-file .env up --build
-bash scripts/local_smoke.sh .env                                 # 43 end-to-end checks (REST, speech-to-text, text-to-speech, Gradio GPU endpoint, frontend); exits non-zero on failure
+bash scripts/local_smoke.sh .env                                 # 44 end-to-end checks (REST, speech-to-text, text-to-speech, Gradio GPU endpoint, frontend); exits non-zero on failure
 ```
 
 The user's rule is to test locally (unit tests plus the smoke script against the Docker stack) before deploying anything.

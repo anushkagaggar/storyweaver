@@ -1,6 +1,6 @@
 # Privacy notice
 
-*Draft, 13 Nov 2026 (V2). Written for the parent who uses StoryWeaver. It describes what the code does today; the
+*Draft, 13 Nov 2026 (V2). The short in-app version is the `/privacy` page; keep the two in step. Written for the parent who uses StoryWeaver. It describes what the code does today; the
 reasoning and the open risks are in [`dpia.md`](dpia.md).*
 
 StoryWeaver is a portfolio project run by one person. It is not a commercial service, has no accounts and is
@@ -28,10 +28,9 @@ Don't share the address unless you want others to read the story. Stories aren't
 
 Every service below is a company in the United States, so your data leaves your country when you use StoryWeaver.
 
-- **Groq**: writes, checks and reads the story, and (usually) turns your voice into text. Groq offers a
-  *Zero Data Retention* setting that stops it keeping what we send. **It has not been confirmed as switched on
-  for this project**, so assume Groq may keep requests for its standard period (Groq's documentation mentions
-  up to 30 days for reliability and abuse monitoring). See [Groq's data page](https://console.groq.com/docs/your-data).
+- **Groq**: writes, checks and reads the story, and (usually) turns your voice into text. Our Groq organisation has
+  *Zero Data Retention* switched on (checked in Groq's Data Controls on 13 Nov 2026), so Groq doesn't log or keep
+  what we send, instead of its standard period of up to 30 days. See [Groq's data page](https://console.groq.com/docs/your-data).
 - **Vercel** hosts the website and **Hugging Face** hosts the story server. Their systems keep routine logs of
   requests (time, address, result). They don't keep what you said or typed on our behalf.
 - **Neon** (database), **Backblaze** (audio files) and **Upstash** (usage counts), as in the table.
@@ -46,7 +45,6 @@ ideas and stories still go to Groq.)
 
 ## What we can't promise yet
 
-- **Groq's retention.** As above: not confirmed as zero.
 - **Deleting a story.** There is no delete button or automatic expiry yet. To have a story removed, contact the
   site owner with its web address.
 - **No legal review.** This project hasn't been reviewed by a lawyer and is not offered to the public as a

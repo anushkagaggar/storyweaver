@@ -297,7 +297,7 @@ storyweaver/
 | `evaluation/data/prompts_v1.txt` | The 50 eval prompts |
 | `evaluation/results/json_validity_v1.{md,jsonl}` | Results: 50/50 valid |
 | `infra/docker-compose.yml` | Local stack: API (GPU), web, Postgres + pgvector, Redis, SeaweedFS S3 (:8333) |
-| `scripts/local_smoke.sh` | 43 end-to-end checks (incl. one real Whisper call and Kokoro narration) against the running stack; exits non-zero on failure |
+| `scripts/local_smoke.sh` | 44 end-to-end checks (incl. one real Whisper call and Kokoro narration) against the running stack; exits non-zero on failure |
 | `docs/decisions/ADR-0001-zerogpu-fastapi.md` | Why the app is a `gr.Server` with Gradio GPU endpoints alongside REST |
 | `docs/decisions/ADR-0002-redirect-brand-ideas.md` | Why brand ideas are adapted, not refused |
 | `docs/decisions/ADR-0003-pyav-gpl-ffmpeg.md` | Why PyAV's GPL-built FFmpeg is acceptable server-side (never distributed) |
@@ -373,7 +373,7 @@ copy frontend\.env.example frontend\.env.local
 # 2. Full local stack: API (GPU) :7860, web :3000, Postgres :5432, Redis :6379, SeaweedFS S3 :8333
 docker compose -f infra/docker-compose.yml --env-file .env up --build
 
-# 3. Smoke test (Git Bash), 43 checks
+# 3. Smoke test (Git Bash), 44 checks
 bash scripts/local_smoke.sh .env
 ```
 
@@ -433,7 +433,7 @@ and 33/33 smoke checks.
 | **Backend (HF Space)** | A pushed `v*` tag runs CI, then `deploy-backend.yml` uploads `backend/`. If `backend/` hasn't changed, no new Space commit is made |
 
 **Release process** (every version):
-1. **Local gate:** backend, frontend and MCP tests; Docker stack + smoke test (43/43); the version's exit criteria checked by hand.
+1. **Local gate:** backend, frontend and MCP tests; Docker stack + smoke test (44/44); the version's exit criteria checked by hand.
 2. **CI:** push `dev-vN` and wait for CI to pass.
 3. **Backend:** tag `vX.Y.Z` and push the tag, then check the Space:
    - runtime `RUNNING`;

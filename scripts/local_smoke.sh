@@ -84,6 +84,7 @@ echo "--- Frontend"
 check "home page 200"                   200 "$(code $WEB/)"
 check "status page 200"                 200 "$(code $WEB/status)"
 check "story page 200"                  200 "$(code $WEB/story/00000000-0000-4000-8000-000000000000)"
+check "privacy page 200"                200 "$(code $WEB/privacy)"
 # Story routes. The unsafe idea is a URL: the rules reject it before any model call, so no Groq quota is used.
 unsafe=$(curl -s -m 30 -X POST $WEB/api/stories -H 'Content-Type: application/json' -d '{"prompt":"visit www.example.com with Pip"}')
 check "api/stories unsafe idea -> 422"  "unsafe_input|urls" "$(echo "$unsafe" | python -I -c 'import json,sys;d=json.load(sys.stdin);print(d.get("code"),d.get("category"),sep="|")')"

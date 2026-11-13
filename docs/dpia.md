@@ -50,8 +50,8 @@ faster-whisper → text returned. Nothing in this path writes the audio to a fil
 
 | # | Risk | Likelihood | Severity | Mitigation today | Residual |
 |---|---|---|---|---|---|
-| 1 | A child's voice reaches a third party (Groq, US) | Medium | High | Recording is never stored by us; parent-operated; `STT_ENGINE=local` keeps voice on the Space; a notice explains it | **Medium** until ZDR is confirmed (R2 below) and the notice is shown in the UI |
-| 2 | Groq keeps requests (text and audio) for its standard period | Medium | Medium | Zero Data Retention is available in Groq's Data Controls. **Not confirmed as enabled** | **Open: owner action 1** |
+| 1 | A child's voice reaches a third party (Groq, US) | Medium | High | Recording is never stored by us; Groq Zero Data Retention is on; parent-operated; `STT_ENGINE=local` keeps voice on the Space; a notice sits beside the mic button (`/privacy`) | **Low to medium** (a US transfer remains, see risk 7) |
+| 2 | Groq keeps requests (text and audio) for its standard period (up to 30 days) | Low | Medium | **Global and Inference-API Zero Data Retention are enabled** (screenshot of Groq Console → Data Controls, 13 Nov 2026) | Low. Re-check after any change to the Groq organisation |
 | 3 | The parent names the child or gives personal details in an idea | Medium | Medium | Safety policy refuses personal data, URLs and brands in input; stories use invented characters; notice says not to enter names | Low to medium: rules can miss a first name |
 | 4 | Stories and ideas are kept forever | High | Medium | None yet: there is no deletion or expiry | **High: owner action 3** |
 | 5 | A story link is guessed or shared | Low | Low | Random v4 UUIDs; no listing; content only after the output safety check | Low |
@@ -67,7 +67,7 @@ faster-whisper → text returned. Nothing in this path writes the audio to a fil
 |---|---|
 | Best interests of the child | Stories are gentle, end happily and pass two safety checks |
 | Age-appropriate application | Aimed at 4 to 6; the **parent** operates it. No child-facing data entry |
-| Transparency | `privacy.md` in plain language. Not yet linked from the app UI (**action 4**) |
+| Transparency | `privacy.md` in plain language, and a short `/privacy` page linked beside the mic button (slice 5.5) |
 | Detrimental use of data | No profiling, ads, nudges or sale |
 | Default settings / data minimisation | No accounts; recordings never stored; Langfuse content off by default |
 | Data sharing | Only the processors in §2, none for their own purposes (subject to action 1) |
@@ -78,10 +78,10 @@ faster-whisper → text returned. Nothing in this path writes the audio to a fil
 
 | # | Action | Owner | Needed before |
 |---|---|---|---|
-| 1 | Check Groq Console → Data Controls, enable Zero Data Retention if offered, and record the result here and in `privacy.md` | Project owner | Any use beyond the owner's own family |
+| 1 | ~~Check Groq Console → Data Controls and enable Zero Data Retention~~ **Done: enabled, confirmed 13 Nov 2026** | Project owner | — |
 | 2 | Decide whether production sets `STT_ENGINE=local` (voice never leaves the Space) | Project owner | Same |
-| 3 | Add `DELETE /v1/stories/{id}` (database rows and the B2 audio) and an automatic expiry, for example 30 days | Code (candidate follow-up) | Any public sharing |
-| 4 | Link `privacy.md` from the app and show a one-line note beside "Say your idea" | Code (V2 frontend follow-up) | Release of V2 |
+| 3 | Add `DELETE /v1/stories/{id}` (database rows and the B2 audio) and an automatic expiry, for example 30 days. When it ships, update `privacy.md`, the `/privacy` page and risk 4 | Code (**slice 5.5, next**) | Any public sharing |
+| 4 | ~~Link the notice from the app and show a one-line note beside "Say your idea"~~ **Done in slice 5.5** (`/privacy`) | Code | — |
 | 5 | Re-read every new logging call and trace; keep content out | Code review | Each release |
 | 6 | Legal review, and consent design if ever opened to the public | Owner | Public launch |
 

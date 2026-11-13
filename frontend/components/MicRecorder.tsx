@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { transcribeAudio } from "@/lib/story-client";
@@ -140,6 +141,9 @@ export function MicRecorder({ onTranscript, disabled }: { onTranscript: (text: s
           Listening to your recording…
         </p>
       )}
+      <p className="hint">
+        Your recording is turned into text and never saved. <Link href="/privacy">Privacy</Link>
+      </p>
       <p className="hint mic-message" role="status" aria-live="polite">
         {phase === "recording" ? "Recording… speak your story idea, then press Done." : message}
       </p>

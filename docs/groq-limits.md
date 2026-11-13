@@ -9,7 +9,7 @@ API key in the account shares them. The quota-aware router (`routing/quotas.py`,
   2. **This account's live response headers** (`x-ratelimit-limit-requests` = RPD, `x-ratelimit-limit-tokens` =
      TPM), read with one tiny request per model on 14 Oct 2026. They matched the docs exactly for every model
      checked, which confirms this table is the free-tier limit for this account.
-- **Zero Data Retention enabled (Settings → Data Controls):** _not yet checked_
+- **Zero Data Retention enabled (Settings → Data Controls):** yes, Global ZDR and Inference-API ZDR both on (confirmed 13 Nov 2026)
 
 | Model ID | RPM | RPD | TPM | TPD | Audio s/h | Audio s/day | Live headers | Used for |
 |---|---|---|---|---|---|---|---|---|
