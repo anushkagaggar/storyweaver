@@ -6,7 +6,7 @@ import pytest
 
 from storyweaver.config import Settings
 from storyweaver.services import build_blob_store
-from storyweaver.storage.blob import InMemoryBlobStore, S3BlobStore, S3Config, scene_audio_key
+from storyweaver.storage.blob import InMemoryBlobStore, S3BlobStore, S3Config, scene_audio_key, story_prefix
 
 pytestmark = pytest.mark.unit
 
@@ -84,3 +84,18 @@ def test_blob_storage_needs_endpoint_and_both_keys(
     assert settings.blob_storage_enabled is enabled
     if not enabled:
         assert build_blob_store(settings) is None
+
+
+async def test_delete_prefix_removes_only_that_story() -> None:
+    store = InMemoryBlobStore()
+    for key in ("stories/a/audio/scene-1.mp3", "stories/a/audio/scene-2.mp3", "stories/ab/audio/scene-1.mp3"):
+        await store.put(key, b"x", "audio/mpeg")
+
+    assert await store.delete_prefix(story_prefix("a")) == 2
+    assert list(store.objects) == ["stories/ab/audio/scene-1.mp3"]  # "a/" must not match "ab/"
+    assert await store.delete_prefix(story_prefix("a")) == 0
+
+
+async def test_delete_prefix_refuses_a_prefix_without_a_trailing_slash() -> None:
+    with pytest.raises(ValueError, match="ending in '/'"):
+        await InMemoryBlobStore().delete_prefix("stories/a")

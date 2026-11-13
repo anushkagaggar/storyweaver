@@ -19,7 +19,7 @@ accounts. It is **not offered to the public**. If that changes, this DPIA must b
 | Data | Source | Purpose | Stored? | Recipients (all US) |
 |---|---|---|---|---|
 | Voice recording (up to 60 s) | Parent's microphone | Turn the spoken idea into text | **No.** In memory only (browser, Vercel function, Space), then dropped | Groq Whisper; or faster-whisper on the Space CPU when `STT_ENGINE=local`, the quota is used up, or Groq fails |
-| Story idea (≤ 500 chars) | Typed, or transcript | Safety check, story planning | Yes, `stories.prompt_text` in Neon | Groq (Prompt Guard, safeguard, planner) |
+| Story idea (≤ 500 chars) | Typed, or transcript | Safety check, story planning | Yes, `stories.prompt_text` in Neon, up to 30 days (or until deleted) | Groq (Prompt Guard, safeguard, planner) |
 | Story text, characters | Generated | Show the story; second safety check | Yes, Neon | Groq (safeguard check) |
 | Narration audio (MP3 per page) | Generated from story text | Playback | Yes, private Backblaze B2 bucket, keyed by story id | Groq Orpheus (text in, audio out) or Kokoro on the Space; B2 stores the result |
 | Quota counters | System | Stay inside free-tier limits | Redis, minutes to a day | Upstash. No content |
@@ -53,7 +53,7 @@ faster-whisper → text returned. Nothing in this path writes the audio to a fil
 | 1 | A child's voice reaches a third party (Groq, US) | Medium | High | Recording is never stored by us; Groq Zero Data Retention is on; parent-operated; `STT_ENGINE=local` keeps voice on the Space; a notice sits beside the mic button (`/privacy`) | **Low to medium** (a US transfer remains, see risk 7) |
 | 2 | Groq keeps requests (text and audio) for its standard period (up to 30 days) | Low | Medium | **Global and Inference-API Zero Data Retention are enabled** (screenshot of Groq Console → Data Controls, 13 Nov 2026) | Low. Re-check after any change to the Groq organisation |
 | 3 | The parent names the child or gives personal details in an idea | Medium | Medium | Safety policy refuses personal data, URLs and brands in input; stories use invented characters; notice says not to enter names | Low to medium: rules can miss a first name |
-| 4 | Stories and ideas are kept forever | High | Medium | None yet: there is no deletion or expiry | **High: owner action 3** |
+| 4 | Stories and ideas are kept longer than needed | Medium | Medium | **Slice 5.5:** "Delete this story" on every story (`DELETE /v1/stories/{id}`: audio files first, then rows) and automatic expiry after `STORY_RETENTION_DAYS` (30) by an hourly sweep; interrupted deletions are finished by the sweep; narration jobs can't leave audio behind (row lock) | Low |
 | 5 | A story link is guessed or shared | Low | Low | Random v4 UUIDs; no listing; content only after the output safety check | Low |
 | 6 | Harmful or unsuitable generated content reaches a child | Low | High | Input checks (rules, Prompt Guard, safeguard policy), a full second check of the story before it is shown, fail-closed | Low; red-team suite arrives in V8 |
 | 7 | Data leaves the UK/EU (all providers are US-based) | Certain | Medium | Disclosed in the notice. No special transfer mechanism is in place | Medium for a real launch |
@@ -72,7 +72,7 @@ faster-whisper → text returned. Nothing in this path writes the audio to a fil
 | Default settings / data minimisation | No accounts; recordings never stored; Langfuse content off by default |
 | Data sharing | Only the processors in §2, none for their own purposes (subject to action 1) |
 | Geolocation, parental controls, nudge techniques, connected toys | Not applicable / not used |
-| Online tools (data subject rights) | Deletion on request only, by the owner. A self-service delete is **action 3** |
+| Online tools (data subject rights) | Self-service "Delete this story" on every story; automatic expiry after 30 days |
 
 ## 6. Actions
 
@@ -80,7 +80,7 @@ faster-whisper → text returned. Nothing in this path writes the audio to a fil
 |---|---|---|---|
 | 1 | ~~Check Groq Console → Data Controls and enable Zero Data Retention~~ **Done: enabled, confirmed 13 Nov 2026** | Project owner | — |
 | 2 | Decide whether production sets `STT_ENGINE=local` (voice never leaves the Space) | Project owner | Same |
-| 3 | Add `DELETE /v1/stories/{id}` (database rows and the B2 audio) and an automatic expiry, for example 30 days. When it ships, update `privacy.md`, the `/privacy` page and risk 4 | Code (**slice 5.5, next**) | Any public sharing |
+| 3 | ~~Add `DELETE /v1/stories/{id}` and automatic expiry~~ **Done in slice 5.5** (30 days; B2 bucket lifecycle must be "Keep only the last version" so deleted files don't linger as old versions) | Code + owner (B2 setting) | — |
 | 4 | ~~Link the notice from the app and show a one-line note beside "Say your idea"~~ **Done in slice 5.5** (`/privacy`) | Code | — |
 | 5 | Re-read every new logging call and trace; keep content out | Code review | Each release |
 | 6 | Legal review, and consent design if ever opened to the public | Owner | Public launch |

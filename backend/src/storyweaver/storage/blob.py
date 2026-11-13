@@ -28,6 +28,10 @@ class BlobStore(Protocol):
 
     async def delete(self, key: str) -> None: ...
 
+    async def delete_prefix(self, prefix: str) -> int:
+        """Delete every object whose key starts with `prefix`. Returns how many were deleted."""
+        ...
+
 
 @dataclass(frozen=True)
 class S3Config:
@@ -102,6 +106,35 @@ class S3BlobStore:
         except Exception as exc:
             raise BlobError(f"Delete of {key} failed: {type(exc).__name__}") from exc
 
+    async def delete_prefix(self, prefix: str) -> int:
+        # One DeleteObject per key, not DeleteObjects: a story has a handful of files, and the batch call
+        # needs a checksum header that not every S3-compatible store accepts.
+        if not prefix.endswith("/"):
+            raise ValueError("delete_prefix needs a prefix ending in '/'.")
+        try:
+            keys = await asyncio.to_thread(self._list_keys, prefix)
+            for key in keys:
+                await asyncio.to_thread(self._client.delete_object, Bucket=self._config.bucket, Key=key)
+        except BlobError:
+            raise
+        except Exception as exc:
+            raise BlobError(f"Delete of {prefix}* failed: {type(exc).__name__}") from exc
+        return len(keys)
+
+    def _list_keys(self, prefix: str) -> list[str]:
+        if not self._bucket_ready:
+            from botocore.exceptions import ClientError
+
+            try:
+                self._client.head_bucket(Bucket=self._config.bucket)
+            except ClientError:
+                return []  # local bucket not created yet: nothing to delete
+        keys: list[str] = []
+        paginator = self._client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=self._config.bucket, Prefix=prefix):
+            keys.extend(item["Key"] for item in page.get("Contents", []))
+        return keys
+
     async def _ensure_bucket(self) -> None:
         if self._bucket_ready:
             return
@@ -139,6 +172,19 @@ class InMemoryBlobStore:
     async def delete(self, key: str) -> None:
         self.objects.pop(key, None)
 
+    async def delete_prefix(self, prefix: str) -> int:
+        if not prefix.endswith("/"):
+            raise ValueError("delete_prefix needs a prefix ending in '/'.")
+        keys = [key for key in self.objects if key.startswith(prefix)]
+        for key in keys:
+            del self.objects[key]
+        return len(keys)
+
+
+def story_prefix(story_id: object) -> str:
+    """Every object of a story lives under this prefix, so deleting a story deletes them all."""
+    return f"stories/{story_id}/"
+
 
 def scene_audio_key(story_id: object, idx: int) -> str:
-    return f"stories/{story_id}/audio/scene-{idx}.mp3"
+    return f"{story_prefix(story_id)}audio/scene-{idx}.mp3"

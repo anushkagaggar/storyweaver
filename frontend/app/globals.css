@@ -263,3 +263,17 @@ button.secondary {
 .audio-note {
   margin-top: 1rem;
 }
+
+/* Deleting a story (V2 slice 5.5) */
+.delete-story {
+  margin-top: 2rem;
+  text-align: center;
+  font-size: 0.9rem;
+}
+
+button.danger {
+  background: var(--fail);
+  border-color: var(--fail);
+  color: #ffffff;
+  padding: 0.3rem 0.9rem;
+}

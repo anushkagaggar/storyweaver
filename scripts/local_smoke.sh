@@ -91,6 +91,8 @@ check "api/stories unsafe idea -> 422"  "unsafe_input|urls" "$(echo "$unsafe" | 
 check "api/stories bad JSON -> 400"     400 "$(code -X POST $WEB/api/stories -H 'Content-Type: application/json' -d '{bad')"
 check "api/stories/<bad id> -> 404"     404 "$(code $WEB/api/stories/not-a-uuid)"
 check "api/stories/<unknown> -> 404"    404 "$(code $WEB/api/stories/00000000-0000-4000-8000-000000000000)"
+check "DELETE api/stories/<unknown> -> 404" 404 "$(code -X DELETE $WEB/api/stories/00000000-0000-4000-8000-000000000000)"
+check "DELETE api/stories/<bad id> -> 404" 404 "$(code -X DELETE $WEB/api/stories/not-a-uuid)"
 # Voice proxy: the Vercel route holds the API key and checks the recording before forwarding it.
 heard_web=$(curl -s -m 120 -X POST $WEB/api/speech/transcribe -H 'Content-Type: audio/wav' --data-binary @$FIXTURE)
 check "web transcribe speech -> text"   True "$(echo "$heard_web" | python -I -c 'import json,sys;print("dragon" in json.load(sys.stdin).get("text","").lower())' 2>/dev/null)"

@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from dataclasses import dataclass, field
+from datetime import timedelta
 
 from groq import AsyncGroq
 from redis.asyncio import Redis
@@ -19,6 +20,7 @@ from storyweaver.llm.planner import StoryPlanner
 from storyweaver.observability.tracing import NoopTracer, Tracer
 from storyweaver.orchestrator.narration import Narrator
 from storyweaver.orchestrator.narration_jobs import NarrateSceneJob, StoryNarration
+from storyweaver.orchestrator.story_deletion import RetentionSweeper, StoryDeletion
 from storyweaver.orchestrator.story_service import PlanStoryJob, StoryService, make_story_failure_hook
 from storyweaver.routing.llm import RoutedLLM
 from storyweaver.routing.router import ModelRouter
@@ -43,19 +45,27 @@ class Services:
     stt: RoutedSTT | None = None
     narrator: Narrator | None = None
     blobs: BlobStore | None = None
+    deletion: StoryDeletion | None = None
+    sweeper: RetentionSweeper | None = None
     worker: Worker | None = None
     tracer: Tracer = field(default_factory=NoopTracer)
     _worker_task: asyncio.Task[None] | None = field(default=None, repr=False)
+    _sweeper_task: asyncio.Task[None] | None = field(default=None, repr=False)
     _stop: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
 
     def start_worker(self) -> None:
         if self.worker is not None and self._worker_task is None:
             self._worker_task = asyncio.create_task(self.worker.run_forever(self._stop), name="job-worker")
+        if self.sweeper is not None and self._sweeper_task is None:
+            self._sweeper_task = asyncio.create_task(
+                self.sweeper.run_forever(self._stop), name="story-expiry"
+            )
 
     async def close(self) -> None:
         self._stop.set()
-        if self._worker_task is not None:
-            await self._worker_task
+        for task in (self._worker_task, self._sweeper_task):
+            if task is not None:
+                await task
         self.tracer.shutdown()
         if self.groq is not None:
             await self.groq.close()
@@ -90,6 +100,14 @@ def build_services(settings: Settings) -> Services:
 
     services.engine = create_engine(settings.database_url)
     services.sessions = create_session_factory(services.engine)
+    services.blobs = build_blob_store(settings)
+    services.deletion = StoryDeletion(services.sessions, services.blobs)
+    if settings.worker_enabled and settings.story_retention_days > 0:
+        services.sweeper = RetentionSweeper(
+            services.deletion,
+            retention=timedelta(days=settings.story_retention_days),
+            interval_seconds=settings.retention_sweep_seconds,
+        )
 
     if services.groq is None:
         # Fail closed: without the safety models no story can be accepted.
@@ -117,7 +135,6 @@ def build_services(settings: Settings) -> Services:
         max_tokens=settings.planner_max_tokens,
         temperature=settings.planner_temperature,
     )
-    services.blobs = build_blob_store(settings)
     narration = None
     if services.blobs is None:
         logger.warning("Object storage is not configured (S3_*): stories will have no narration.")

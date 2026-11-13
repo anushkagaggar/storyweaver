@@ -39,6 +39,12 @@ class StoryStatus(StrEnum):
     CHECKING = "checking"  # planned, awaiting the output safety check; content is not shown yet
     READY = "ready"
     FAILED = "failed"
+    # Being deleted: its files are going and the rows follow. Reads treat it as gone; a retry finishes it.
+    DELETING = "deleting"
+
+
+# Statuses a story can be deleted (by the parent or the expiry sweep) from: nothing is still writing it.
+DELETABLE_STATUSES = frozenset({StoryStatus.READY, StoryStatus.FAILED, StoryStatus.DELETING})
 
 
 class SceneStatus(StrEnum):

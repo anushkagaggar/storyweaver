@@ -219,7 +219,7 @@ storyweaver/
 | `api/middleware.py` | `X-Request-ID`: accepted if valid, otherwise generated; echoed on every response |
 | `api/gpu_endpoints.py` | Gradio API endpoints for GPU work (`gpu_check`), each checking the API key |
 | `api/routers/health.py` | `/health/live` and `/health/ready` (database, Redis, worker) |
-| `api/routers/stories.py` | `POST /v1/stories`, `GET /v1/stories/{id}`, `GET /v1/jobs/{id}` |
+| `api/routers/stories.py` | `POST /v1/stories`, `GET` and `DELETE /v1/stories/{id}`, `GET /v1/jobs/{id}` |
 | `api/routers/diagnostics.py` | `POST /v1/echo` and `GET /v1/groq-check` |
 | `domain/story.py` | Story domain model and content rules (scene count, words per scene, readability, character IDs) |
 | `domain/readability.py` | Flesch-Kincaid grade, with no NLP dependency |
@@ -264,7 +264,7 @@ storyweaver/
 | `app/status/page.tsx` | Health page: backend, GPU and Groq |
 | `app/globals.css` | Styles (light/dark tokens) |
 | `app/api/stories/route.ts` | `POST /api/stories` → backend `POST /v1/stories` (validates input; forwards only the allowed fields and Idempotency-Key) |
-| `app/api/stories/[id]/route.ts` | `GET /api/stories/{id}` → backend (UUID checked first) |
+| `app/api/stories/[id]/route.ts` | `GET` and `DELETE /api/stories/{id}` → backend (UUID checked first) |
 | `app/api/status/route.ts` | Aggregates the backend's health, Groq check and the GPU check |
 | `components/StoryForm.tsx` | Prompt form: Idempotency-Key per idea, busy countdown and auto-resubmit, Cancel |
 | `components/StoryViewer.tsx` | Polls the story with backoff and shows its progress, the book or the failure |
@@ -297,7 +297,7 @@ storyweaver/
 | `evaluation/data/prompts_v1.txt` | The 50 eval prompts |
 | `evaluation/results/json_validity_v1.{md,jsonl}` | Results: 50/50 valid |
 | `infra/docker-compose.yml` | Local stack: API (GPU), web, Postgres + pgvector, Redis, SeaweedFS S3 (:8333) |
-| `scripts/local_smoke.sh` | 44 end-to-end checks (incl. one real Whisper call and Kokoro narration) against the running stack; exits non-zero on failure |
+| `scripts/local_smoke.sh` | 46 end-to-end checks (incl. one real Whisper call and Kokoro narration) against the running stack; exits non-zero on failure |
 | `docs/decisions/ADR-0001-zerogpu-fastapi.md` | Why the app is a `gr.Server` with Gradio GPU endpoints alongside REST |
 | `docs/decisions/ADR-0002-redirect-brand-ideas.md` | Why brand ideas are adapted, not refused |
 | `docs/decisions/ADR-0003-pyav-gpl-ffmpeg.md` | Why PyAV's GPL-built FFmpeg is acceptable server-side (never distributed) |
@@ -319,6 +319,7 @@ All `/v1` routes need `X-API-Key`. Errors are RFC 7807 `application/problem+json
 |---|---|---|
 | `POST` | `/v1/stories` | Body `{prompt, age_band="4-6", num_scenes: 5\|6}`, optional `Idempotency-Key`. **202** `{story_id, job_id, status}`; **422** unsafe idea (`code: unsafe_input`, `category`, message); **429/503** safety check busy (`Retry-After`) |
 | `GET` | `/v1/stories/{id}` | Status (`queued` → `planning` → `checking` → `ready` \| `failed`); content only when `ready`; `notice` if the idea was adapted |
+| `DELETE` | `/v1/stories/{id}` | Deletes the story, its pages and its audio files. **204**; **404** unknown; **409** still being made (`Retry-After`); **503** files not removed yet (story already hidden; retry). Stories also expire after `STORY_RETENTION_DAYS` (30) |
 | `GET` | `/v1/jobs/{id}` | Job status, attempts and next run time |
 | `POST` | `/v1/echo` | Diagnostics |
 | `GET` | `/v1/groq-check` | One small Groq call |
@@ -373,7 +374,7 @@ copy frontend\.env.example frontend\.env.local
 # 2. Full local stack: API (GPU) :7860, web :3000, Postgres :5432, Redis :6379, SeaweedFS S3 :8333
 docker compose -f infra/docker-compose.yml --env-file .env up --build
 
-# 3. Smoke test (Git Bash), 44 checks
+# 3. Smoke test (Git Bash), 46 checks
 bash scripts/local_smoke.sh .env
 ```
 
@@ -433,7 +434,7 @@ and 33/33 smoke checks.
 | **Backend (HF Space)** | A pushed `v*` tag runs CI, then `deploy-backend.yml` uploads `backend/`. If `backend/` hasn't changed, no new Space commit is made |
 
 **Release process** (every version):
-1. **Local gate:** backend, frontend and MCP tests; Docker stack + smoke test (44/44); the version's exit criteria checked by hand.
+1. **Local gate:** backend, frontend and MCP tests; Docker stack + smoke test (46/46); the version's exit criteria checked by hand.
 2. **CI:** push `dev-vN` and wait for CI to pass.
 3. **Backend:** tag `vX.Y.Z` and push the tag, then check the Space:
    - runtime `RUNNING`;

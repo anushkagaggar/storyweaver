@@ -70,6 +70,9 @@ class Settings(BaseSettings):
     s3_create_bucket: bool = False
     # Lifetime of the presigned audio URLs in GET /v1/stories/{id}. The UI re-polls for fresh ones.
     audio_url_ttl_seconds: int = Field(default=3600, ge=60, le=7 * 24 * 3600)
+    # Delete stories (rows and audio) this many days after creation; 0 keeps them forever (docs/privacy.md).
+    story_retention_days: int = Field(default=30, ge=0, le=3650)
+    retention_sweep_seconds: float = Field(default=3600.0, ge=10)
     # Run the in-process job worker (disabled in tests, which drive the worker directly).
     worker_enabled: bool = True
 

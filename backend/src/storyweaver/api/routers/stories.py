@@ -1,4 +1,4 @@
-"""Story endpoints (plan §6.8): POST /v1/stories -> 202, GET /v1/stories/{id}, GET /v1/jobs/{id}."""
+"""Story endpoints (plan §6.8): POST /v1/stories -> 202, GET/DELETE /v1/stories/{id}, GET /v1/jobs/{id}."""
 
 import uuid
 from datetime import datetime
@@ -8,17 +8,25 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from storyweaver.api.deps import BlobStoreDep, SessionsDep, SettingsDep, StoryServiceDep, require_api_key
+from storyweaver.api.deps import (
+    BlobStoreDep,
+    SessionsDep,
+    SettingsDep,
+    StoryDeletionDep,
+    StoryServiceDep,
+    require_api_key,
+)
 from storyweaver.api.errors import problem_response
 from storyweaver.domain.story import AgeBand, Line, SceneCount
 from storyweaver.jobs.queue import JobQueue
+from storyweaver.orchestrator.story_deletion import StoryInProgressError
 from storyweaver.orchestrator.story_service import (
     IdempotencyConflictError,
     SafetyUnavailableError,
     UnsafeInputError,
 )
 from storyweaver.safety.guards import BRANDS
-from storyweaver.storage.blob import BlobStore
+from storyweaver.storage.blob import BlobError, BlobStore
 from storyweaver.storage.models import SceneRow, SceneStatus, StoryRow, StoryStatus
 from storyweaver.storage.repositories import StoryRepository
 
@@ -172,7 +180,7 @@ async def get_story(
 ) -> StoryOut:
     async with sessions() as session:
         story = await StoryRepository(session).get(story_id)
-    if story is None:
+    if story is None or story.status == StoryStatus.DELETING:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Story not found.")
     # Content is shown only after the output safety check has passed.
     visible = story.status == StoryStatus.READY
@@ -198,6 +206,41 @@ async def get_story(
         created_at=story.created_at,
         updated_at=story.updated_at,
     )
+
+
+@router.delete(
+    "/stories/{story_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={
+        404: {"description": "No such story (or already deleted)"},
+        409: {"description": "The story is still being made"},
+        503: {"description": "Its files couldn't be deleted yet; retry (the story already reads as deleted)"},
+    },
+)
+async def delete_story(story_id: uuid.UUID, request: Request, deletion: StoryDeletionDep) -> Response:
+    """Delete a story, its pages and its narration audio (privacy). Anyone with the story's link may do this,
+    as with reading it: the link is the only credential (docs/dpia.md)."""
+    try:
+        deleted = await deletion.delete(story_id)
+    except StoryInProgressError:
+        return problem_response(
+            request,
+            status.HTTP_409_CONFLICT,
+            "This story is still being made. Please try again in a minute.",
+            headers={"Retry-After": "30"},
+            extra={"code": "story_in_progress"},
+        )
+    except BlobError:
+        return problem_response(
+            request,
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "The story is hidden, but its audio couldn't be removed yet. Please try again shortly.",
+            headers={"Retry-After": "30"},
+            extra={"code": "delete_incomplete"},
+        )
+    if not deleted:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Story not found.")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 def _scene_out(story: StoryRow, scene: SceneRow, blobs: BlobStore | None, ttl: int) -> SceneOut:

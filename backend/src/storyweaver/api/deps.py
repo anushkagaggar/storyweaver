@@ -7,6 +7,7 @@ from groq import AsyncGroq
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from storyweaver.config import Settings, get_settings
+from storyweaver.orchestrator.story_deletion import StoryDeletion
 from storyweaver.orchestrator.story_service import StoryService
 from storyweaver.services import Services
 from storyweaver.storage.blob import BlobStore
@@ -77,3 +78,12 @@ def get_blob_store(services: ServicesDep) -> BlobStore | None:
 
 
 BlobStoreDep = Annotated[BlobStore | None, Depends(get_blob_store)]
+
+
+def get_story_deletion(services: ServicesDep) -> StoryDeletion:
+    if services.deletion is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Story storage is not configured.")
+    return services.deletion
+
+
+StoryDeletionDep = Annotated[StoryDeletion, Depends(get_story_deletion)]

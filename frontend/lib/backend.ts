@@ -36,7 +36,7 @@ const FORWARDED_HEADERS = ["content-type", "retry-after", "location", "idempoten
  */
 export async function forwardToBackend(
   path: string,
-  init: { method?: "GET" | "POST"; body?: string | Uint8Array; headers?: Record<string, string>; timeoutMs?: number } = {},
+  init: { method?: "GET" | "POST" | "DELETE"; body?: string | Uint8Array; headers?: Record<string, string>; timeoutMs?: number } = {},
 ): Promise<Response> {
   const { baseUrl, apiKey } = backendConfig();
   try {
@@ -53,7 +53,9 @@ export async function forwardToBackend(
       const value = upstream.headers.get(name);
       if (value) headers.set(name, value);
     }
-    return new Response(upstream.body, { status: upstream.status, headers });
+    // A 204 must not carry a body (the Response constructor throws).
+    const body = upstream.status === 204 ? null : upstream.body;
+    return new Response(body, { status: upstream.status, headers });
   } catch (error) {
     const timedOut = error instanceof Error && error.name === "TimeoutError";
     const status = timedOut ? 504 : 502;

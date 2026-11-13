@@ -1,6 +1,6 @@
 // Browser-side calls to our own /api routes (never the backend directly; the API key stays on the server).
 
-import { parseRetryAfter, problemMessage, transcribeMessage } from "@/lib/story-logic";
+import { deleteMessage, parseRetryAfter, problemMessage, transcribeMessage } from "@/lib/story-logic";
 import type { CreateStoryResponse, Problem, SceneChoice, Story, Transcript } from "@/lib/story-types";
 
 export type Failure = { ok: false; message: string; status: number; retryAfter: number | null };
@@ -63,6 +63,24 @@ export async function transcribeAudio(recording: Blob): Promise<Result<Transcrip
       return { ok: false, message: transcribeMessage(problem), status: response.status, retryAfter: parseRetryAfter(response.headers.get("retry-after")) };
     }
     return { ok: true, value: (await response.json()) as Transcript };
+  } catch {
+    return { ok: false, message: "We couldn't reach the storyteller. Check your connection and try again.", status: 0, retryAfter: null };
+  }
+}
+
+/** Delete a story for good. A 404 counts as success: the story is gone either way. */
+export async function deleteStory(id: string): Promise<Result<null>> {
+  try {
+    const response = await fetch(`/api/stories/${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (response.ok || response.status === 404) return { ok: true, value: null };
+    let problem: Problem = { status: response.status };
+    try {
+      problem = { ...((await response.json()) as Problem), status: response.status };
+    } catch {
+      // Non-JSON error body: fall back to the status code.
+    }
+    const retryAfter = parseRetryAfter(response.headers.get("retry-after"));
+    return { ok: false, message: deleteMessage(problem), status: response.status, retryAfter };
   } catch {
     return { ok: false, message: "We couldn't reach the storyteller. Check your connection and try again.", status: 0, retryAfter: null };
   }

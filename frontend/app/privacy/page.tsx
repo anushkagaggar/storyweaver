@@ -19,7 +19,7 @@ export default function PrivacyPage() {
 
       <h2>Your story idea and the story</h2>
       <p>
-        These are stored in our database (Neon, United States) and sent to Groq to check they&apos;re suitable for children,
+        These are stored in our database (Neon, United States) for up to 30 days and sent to Groq to check they&apos;re suitable for children,
         write the story and read it aloud. Reading-voice audio is kept in a private file store (Backblaze, United States);
         links to it expire after an hour. Nothing is used to train a model, sold, or used for adverts.
       </p>
@@ -33,11 +33,14 @@ export default function PrivacyPage() {
       <h2>Please don&apos;t use real names</h2>
       <p>Don&apos;t type or say a child&apos;s name, address, school or anything else that identifies a real person.</p>
 
-      <h2>Not yet</h2>
+      <h2>Deleting a story</h2>
       <p>
-        Stories are kept until they&apos;re deleted by hand; there is no delete button or automatic expiry yet. This project
-        hasn&apos;t had a legal review and isn&apos;t offered to the public as a service.
+        Every story has a &ldquo;Delete this story&rdquo; button that removes the idea, the pages and the reading voice for
+        good. Stories you don&apos;t delete are removed automatically 30 days after they were made.
       </p>
+
+      <h2>Not yet</h2>
+      <p>This project hasn&apos;t had a legal review and isn&apos;t offered to the public as a service.</p>
 
       <p className="again">
         <Link href="/">Back to making a story</Link>

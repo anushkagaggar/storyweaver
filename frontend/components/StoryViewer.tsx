@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
+import { DeleteStory } from "@/components/DeleteStory";
 import { StoryBook } from "@/components/StoryBook";
 import { fetchStory } from "@/lib/story-client";
 import { FINAL_STATUSES, hasPendingAudio, mergeAudioUrls, pollDelayMs, statusHint, statusMessage } from "@/lib/story-logic";
@@ -11,7 +12,8 @@ import type { Story } from "@/lib/story-types";
 type View =
   | { kind: "loading" }
   | { kind: "story"; story: Story }
-  | { kind: "error"; message: string; final: boolean };
+  | { kind: "error"; message: string; final: boolean }
+  | { kind: "deleted" };
 
 // Narration finishes after the text, so a ready story is polled a while longer (about 10 minutes at most).
 const MAX_AUDIO_POLLS = 120;
@@ -23,6 +25,8 @@ const MAX_AUDIO_POLLS = 120;
 export function StoryViewer({ id }: { id: string }) {
   const [view, setView] = useState<View>({ kind: "loading" });
   const latest = useRef<Story | null>(null);
+  // Set once the story is deleted, so an in-flight poll does not bring it back.
+  const deleted = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -30,7 +34,7 @@ export function StoryViewer({ id }: { id: string }) {
 
     async function poll(attempt: number) {
       const result = await fetchStory(id);
-      if (cancelled) return;
+      if (cancelled || deleted.current) return;
       if (result.ok) {
         const story = mergeAudioUrls(latest.current, result.value);
         latest.current = story;
@@ -51,6 +55,21 @@ export function StoryViewer({ id }: { id: string }) {
     };
   }, [id]);
 
+  function onDeleted() {
+    deleted.current = true;
+    setView({ kind: "deleted" });
+  }
+
+  if (view.kind === "deleted") {
+    return (
+      <div className="story-status" role="status">
+        <h1>Story deleted</h1>
+        <p>The story, its pages and its reading voice are gone for good.</p>
+        <Link href="/">Make a new story</Link>
+      </div>
+    );
+  }
+
   if (view.kind === "story" && view.story.status === "ready") {
     return (
       <>
@@ -63,6 +82,7 @@ export function StoryViewer({ id }: { id: string }) {
         <p className="again">
           <Link href="/">Make another story</Link>
         </p>
+        <DeleteStory id={id} onDeleted={onDeleted} />
       </>
     );
   }
@@ -73,6 +93,7 @@ export function StoryViewer({ id }: { id: string }) {
         <h1>{statusMessage("failed")}</h1>
         <p>{view.story.error?.detail ?? "Please try a different idea."}</p>
         <Link href="/">Try another idea</Link>
+        <DeleteStory id={id} onDeleted={onDeleted} />
       </div>
     );
   }

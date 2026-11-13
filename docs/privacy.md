@@ -12,9 +12,9 @@ anything else that identifies a real person.
 | What | Where it goes | How long it is kept |
 |---|---|---|
 | **Your voice** (when you press "Say your idea") | Your browser sends it to our web server, which passes it to our story server. There it is turned into text by **Groq's Whisper** service (United States). If that service is busy or switched off, the same step runs on our own server instead. | **It is never saved.** It exists in memory only while it is turned into text, then it is gone. We don't write it to disk and we don't log it. |
-| **Your story idea** (typed, or the text from your voice) | Stored in our database (Neon, United States). Sent to Groq (United States) to check it is suitable for children and to write the story. | Currently **kept until we delete it by hand**. There is no automatic deletion yet (see "What we can't promise"). |
+| **Your story idea** (typed, or the text from your voice) | Stored in our database (Neon, United States). Sent to Groq (United States) to check it is suitable for children and to write the story. | **Deleted automatically 30 days after the story was made**, or straight away when you press "Delete this story". |
 | **The story** (title, pages, characters) | Stored in our database. Sent to Groq to check it again before you see it, and to read it aloud when Groq's voice is used. | Same as the idea. |
-| **The reading voice** (one audio file per page) | Made by Groq's Orpheus voice (United States), or by a voice model running on our own server. Stored in a private bucket at Backblaze (United States). | Kept with the story. Playback links expire after one hour. |
+| **The reading voice** (one audio file per page) | Made by Groq's Orpheus voice (United States), or by a voice model running on our own server. Stored in a private bucket at Backblaze (United States). | Deleted with the story. Playback links expire after one hour. |
 | **Usage counts** | Upstash Redis (United States): numbers that keep us inside free usage limits. | Minutes to a day. They contain no text, audio or names. |
 
 We don't use your data to train any model. We don't sell it, show adverts or build profiles.
@@ -23,6 +23,12 @@ We don't use your data to train any model. We don't sell it, show adverts or bui
 
 There are no accounts. A story is shown to anyone who has its web address, which contains a long random code.
 Don't share the address unless you want others to read the story. Stories aren't listed anywhere.
+
+## Deleting a story
+
+Every story page has a **"Delete this story"** button. It removes the idea, the pages and the reading voice for
+good. Like reading, anyone with the story's address can do this. A story that is still being made can be deleted
+once it is finished. Stories you don't delete are removed automatically **30 days** after they were made.
 
 ## Who else is involved
 
@@ -45,8 +51,6 @@ ideas and stories still go to Groq.)
 
 ## What we can't promise yet
 
-- **Deleting a story.** There is no delete button or automatic expiry yet. To have a story removed, contact the
-  site owner with its web address.
 - **No legal review.** This project hasn't been reviewed by a lawyer and is not offered to the public as a
   service. Children's privacy law (the US COPPA rules, which since 2025 treat voiceprints as personal
   information, and the UK Children's Code) would apply to a real launch.

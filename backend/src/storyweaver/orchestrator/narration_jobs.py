@@ -107,12 +107,11 @@ class NarrateSceneJob:
         except BlobError as exc:
             raise RetryableJobError(str(exc)) from exc
 
-        async with self._sessions() as session, session.begin():
-            repo = StoryRepository(session)
-            saved = await repo.get_scene(story_id, idx)
-            if saved is None:
-                raise PermanentJobError("not_found", "Scene was deleted while narrating.")
-            await repo.set_scene_audio(saved, audio_key=key, status=SceneStatus.AUDIO_READY)
+        if not await self._save(story_id, idx, key):
+            # Deleted (or being deleted) while we were narrating: don't leave the file behind.
+            await self._discard(key)
+            logger.info("Story %s was deleted while narrating scene %d; audio discarded.", story_id, idx)
+            return
         logger.info(
             "Story %s scene %d narrated with %s (%.1f s of audio).",
             story_id,
@@ -120,6 +119,23 @@ class NarrateSceneJob:
             audio.engine,
             audio.duration_seconds,
         )
+
+    async def _save(self, story_id: uuid.UUID, idx: int, key: str) -> bool:
+        """Record the audio key, under the story's row lock and only while it is READY (story_deletion.py)."""
+        async with self._sessions() as session, session.begin():
+            repo = StoryRepository(session)
+            story = await repo.lock(story_id)
+            scene = await repo.get_scene(story_id, idx) if story is not None else None
+            if story is None or scene is None or story.status != StoryStatus.READY:
+                return False
+            await repo.set_scene_audio(scene, audio_key=key, status=SceneStatus.AUDIO_READY)
+            return True
+
+    async def _discard(self, key: str) -> None:
+        try:
+            await self._blobs.delete(key)
+        except BlobError as exc:  # the expiry sweep can't see it now; log so it can be found
+            logger.error("Could not remove orphaned audio %s: %s", key, exc)
 
     async def _speak(
         self,

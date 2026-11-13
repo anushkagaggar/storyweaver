@@ -2,13 +2,21 @@
 
 import uuid
 from collections.abc import Mapping
+from datetime import datetime
 
-from sqlalchemy import delete, select
+from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from storyweaver.domain.story import AgeBand, Character, Line, Scene, Story
-from storyweaver.storage.models import CharacterRow, SceneRow, SceneStatus, StoryRow, StoryStatus
+from storyweaver.storage.models import (
+    DELETABLE_STATUSES,
+    CharacterRow,
+    SceneRow,
+    SceneStatus,
+    StoryRow,
+    StoryStatus,
+)
 
 
 class StoryRepository:
@@ -45,6 +53,34 @@ class StoryRepository:
             .options(selectinload(StoryRow.characters), selectinload(StoryRow.scenes))
         )
         return result.scalar_one_or_none()
+
+    async def lock(self, story_id: uuid.UUID) -> StoryRow | None:
+        """The story row, locked until the transaction ends (serialises deletion with narration saves)."""
+        result = await self._session.execute(
+            select(StoryRow).where(StoryRow.id == story_id).with_for_update()
+        )
+        return result.scalar_one_or_none()
+
+    async def delete_row(self, story_id: uuid.UUID) -> None:
+        """Delete the story; characters, scenes and jobs go with it (ON DELETE CASCADE)."""
+        await self._session.execute(delete(StoryRow).where(StoryRow.id == story_id))
+
+    async def expired_ids(
+        self, *, created_before: datetime, stuck_before: datetime, limit: int
+    ) -> list[uuid.UUID]:
+        """Deletable stories created before `created_before`; deletions interrupted before `stuck_before`."""
+        result = await self._session.execute(
+            select(StoryRow.id)
+            .where(
+                or_(
+                    and_(StoryRow.created_at < created_before, StoryRow.status.in_(DELETABLE_STATUSES)),
+                    and_(StoryRow.status == StoryStatus.DELETING, StoryRow.updated_at < stuck_before),
+                )
+            )
+            .order_by(StoryRow.created_at)
+            .limit(limit)
+        )
+        return list(result.scalars())
 
     async def get_by_idempotency_key(self, key: str) -> StoryRow | None:
         result = await self._session.execute(select(StoryRow).where(StoryRow.idempotency_key == key))

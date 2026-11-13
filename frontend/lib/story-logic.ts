@@ -167,3 +167,9 @@ export function formatClock(seconds: number): string {
   const whole = Math.max(0, Math.floor(seconds));
   return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
 }
+
+/** Why a story couldn't be deleted. The backend's 409 and 503 details are written for parents. */
+export function deleteMessage(problem: Problem): string {
+  if ((problem.status === 409 || problem.status === 503) && problem.detail) return problem.detail;
+  return "We couldn't delete the story. Please try again.";
+}

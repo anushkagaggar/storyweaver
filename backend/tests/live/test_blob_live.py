@@ -63,3 +63,25 @@ async def test_b2_upload_presign_fetch_delete() -> None:
         await store.delete(key)
     async with httpx.AsyncClient(timeout=30) as http:
         assert (await http.get(store.presigned_get_url(key, 120))).status_code == 404
+
+
+@pytest.mark.skipif(not (KEY_ID and KEY), reason="BACKBLAZE_ID / BACKBLAZE_KEY not set")
+async def test_b2_delete_prefix_removes_a_whole_story() -> None:
+    pytest.importorskip("boto3")
+    assert KEY_ID and KEY
+    region = ENDPOINT.split("//", 1)[-1].split(".")[1]
+    store = S3BlobStore(
+        S3Config(
+            endpoint_url=ENDPOINT, bucket=BUCKET, access_key_id=KEY_ID, secret_access_key=KEY, region=region
+        )
+    )
+    prefix = f"live-test/{uuid.uuid4()}/"
+    keys = [f"{prefix}audio/scene-{i}.mp3" for i in (1, 2)]
+    for key in keys:
+        await store.put(key, b"ID3" + os.urandom(100), "audio/mpeg")
+
+    assert await store.delete_prefix(prefix) == 2
+    assert await store.delete_prefix(prefix) == 0
+    async with httpx.AsyncClient(timeout=30) as http:
+        for key in keys:
+            assert (await http.get(store.presigned_get_url(key, 60))).status_code == 404
