@@ -3,16 +3,18 @@
 import { parseRetryAfter, problemMessage } from "@/lib/story-logic";
 import type { CreateStoryResponse, Problem, SceneChoice, Story } from "@/lib/story-types";
 
-export type Result<T> = { ok: true; value: T } | { ok: false; message: string; status: number };
+export type Failure = { ok: false; message: string; status: number; retryAfter: number | null };
+export type Result<T> = { ok: true; value: T } | Failure;
 
-async function failure(response: Response): Promise<{ ok: false; message: string; status: number }> {
+async function failure(response: Response): Promise<Failure> {
   let problem: Problem = { status: response.status };
   try {
     problem = { ...((await response.json()) as Problem), status: response.status };
   } catch {
     // Non-JSON error body: fall back to the status code.
   }
-  return { ok: false, message: problemMessage(problem, parseRetryAfter(response.headers.get("retry-after"))), status: response.status };
+  const retryAfter = parseRetryAfter(response.headers.get("retry-after"));
+  return { ok: false, message: problemMessage(problem, retryAfter), status: response.status, retryAfter };
 }
 
 export async function createStory(
@@ -29,7 +31,7 @@ export async function createStory(
     if (!response.ok) return failure(response);
     return { ok: true, value: (await response.json()) as CreateStoryResponse };
   } catch {
-    return { ok: false, message: "We couldn't reach the storyteller. Check your connection and try again.", status: 0 };
+    return { ok: false, message: "We couldn't reach the storyteller. Check your connection and try again.", status: 0, retryAfter: null };
   }
 }
 
@@ -39,6 +41,6 @@ export async function fetchStory(id: string): Promise<Result<Story>> {
     if (!response.ok) return failure(response);
     return { ok: true, value: (await response.json()) as Story };
   } catch {
-    return { ok: false, message: "Reconnecting…", status: 0 };
+    return { ok: false, message: "Reconnecting…", status: 0, retryAfter: null };
   }
 }

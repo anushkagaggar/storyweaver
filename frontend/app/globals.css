@@ -103,6 +103,14 @@ button:disabled {
   cursor: default;
 }
 
+button.link-button {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  text-decoration: underline;
+}
+
 button:focus-visible,
 textarea:focus-visible,
 input:focus-visible,

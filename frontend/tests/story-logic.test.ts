@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  autoRetryDelaySeconds,
+  busyCountdownMessage,
   FINAL_STATUSES,
+  MAX_AUTO_RETRIES,
   parseRetryAfter,
   pollDelayMs,
   problemMessage,
@@ -71,5 +74,36 @@ describe("parseRetryAfter and UUID_PATTERN", () => {
     expect(parseRetryAfter("soon")).toBeNull();
     expect(UUID_PATTERN.test("56983979-3898-4355-95c3-29144bfdc9d3")).toBe(true);
     expect(UUID_PATTERN.test("../../v1/jobs")).toBe(false);
+  });
+});
+
+describe("autoRetryDelaySeconds", () => {
+  it("waits Retry-After plus a second for busy answers", () => {
+    expect(autoRetryDelaySeconds(429, 37, 0)).toBe(38);
+    expect(autoRetryDelaySeconds(503, 30, 1)).toBe(31);
+  });
+
+  it("falls back to a default wait and caps long waits", () => {
+    expect(autoRetryDelaySeconds(429, null, 0)).toBe(20);
+    expect(autoRetryDelaySeconds(429, 0, 0)).toBe(20);
+    expect(autoRetryDelaySeconds(429, 3600, 0)).toBe(90);
+  });
+
+  it("never retries refused, invalid or failed requests", () => {
+    for (const status of [0, 400, 404, 422, 500, 502, 504]) {
+      expect(autoRetryDelaySeconds(status, 10, 0)).toBeNull();
+    }
+  });
+
+  it("gives up after the retry limit", () => {
+    expect(autoRetryDelaySeconds(429, 10, MAX_AUTO_RETRIES - 1)).toBe(11);
+    expect(autoRetryDelaySeconds(429, 10, MAX_AUTO_RETRIES)).toBeNull();
+  });
+});
+
+describe("busyCountdownMessage", () => {
+  it("counts down in words a parent understands", () => {
+    expect(busyCountdownMessage(12)).toMatch(/try again for you in 12 seconds/);
+    expect(busyCountdownMessage(1)).toMatch(/in 1 second…$/);
   });
 });

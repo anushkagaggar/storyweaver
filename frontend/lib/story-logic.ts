@@ -61,6 +61,28 @@ export function problemMessage(problem: Problem, retryAfterSeconds: number | nul
   }
 }
 
+/** How many times the form resubmits a busy (429/503) idea on its own before handing back to the parent. */
+export const MAX_AUTO_RETRIES = 3;
+const DEFAULT_BUSY_WAIT_SECONDS = 20;
+const MAX_BUSY_WAIT_SECONDS = 90;
+
+/**
+ * Seconds to wait before resubmitting automatically, or null when the parent should decide.
+ * Only "busy" answers qualify (429 quota, 503 safety check briefly unavailable); a refused or invalid idea never
+ * does. One second is added to Retry-After so the per-minute window has really moved on.
+ */
+export function autoRetryDelaySeconds(status: number, retryAfterSeconds: number | null, retriesSoFar: number): number | null {
+  if (status !== 429 && status !== 503) return null;
+  if (retriesSoFar >= MAX_AUTO_RETRIES) return null;
+  const wait = retryAfterSeconds && retryAfterSeconds > 0 ? retryAfterSeconds + 1 : DEFAULT_BUSY_WAIT_SECONDS;
+  return Math.min(wait, MAX_BUSY_WAIT_SECONDS);
+}
+
+export function busyCountdownMessage(secondsLeft: number): string {
+  const unit = secondsLeft === 1 ? "second" : "seconds";
+  return `Lots of stories are being made right now. We'll try again for you in ${secondsLeft} ${unit}…`;
+}
+
 /** Seconds from a Retry-After header (we only send delta-seconds). */
 export function parseRetryAfter(value: string | null): number | null {
   if (!value) return null;

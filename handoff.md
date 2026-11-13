@@ -34,14 +34,15 @@ This is the single document to read before continuing StoryWeaver, whether you'r
 | V0 Foundations and deployment spike | ✅ done, live | `v0.0.1`–`v0.0.5` | 13–14 Oct 2026 |
 | V1 Text storyteller + MCP v1 | ✅ done, live (all four exit criteria met) | `v1.0.0` | 15 Oct 2026 |
 | V1.1 Friendlier guardrails | ✅ done, live | `v1.0.1` | 20 Oct 2026 |
+| V1.0.2 Busy auto-wait + Next.js security fix | ✅ built, local gate passed; release pending | `v1.0.2` | 13 Nov 2026 |
 | V2 Talking storybook (speech ↔ text) | ⏭ next; not started | — | — |
 | V3–V10 | planned (`plan.md` §10, and section 13 below) | — | — |
 
 **Git state:** `main`, `dev-v1` and tag `v1.0.1` all point at `f6ce5f7`, and everything is pushed.
 
 **Next step:**
-1. Do the live browser check of V1.1 (section 9.4), if you haven't already.
-2. Optionally ship the "busy" auto-wait fix as `v1.0.2` (section 12).
+1. ~~Live check of V1.1 (section 9.4)~~ done 13 Nov 2026 through the live `/api/stories` routes: 4/4 correct.
+2. Release `v1.0.2` (section 9.6) with the usual process (section 6.2), then check the countdown live.
 3. Create `dev-v2` from `main` and start V2 slice 1 (section 13.V2).
 
 **Live URLs**
@@ -559,6 +560,13 @@ On the live site, about a minute apart:
 - **Integration:** a brand idea is adapted and the reader is told; an ordinary story has no notice; the 422 detail is specific.
 - **Vitest:** `statusHint`.
 
+### 9.6 V1.0.2: busy auto-wait and Next.js security fix (13 Nov 2026)
+- **Busy auto-wait (option A from section 12).** On a 429, or a 503 from the safety check, the form counts down (*"Lots of stories are being made right now. We'll try again for you in N seconds…"*, with a Cancel link) and resubmits with the **same Idempotency-Key**. The wait is Retry-After + 1 s (20 s if missing, capped at 90 s), with at most `MAX_AUTO_RETRIES` = 3 tries. 422 refusals and other errors never auto-retry. Same key is safe because the input check runs before anything is stored. The logic is pure (`autoRetryDelaySeconds`, `busyCountdownMessage` in `lib/story-logic.ts`); failures from `story-client.ts` carry `retryAfter`. Option C (safeguard margin 1.0) was not done; the backend is unchanged.
+- **Security:** `next` 16.4.0 had a critical advisory (GHSA-2464-fhr4-w9xw, unauthenticated RCE; plus GHSA-673q-mjm6-r5xr, GHSA-p3m5-59mp-jv5r). `next` and `eslint-config-next` are now 16.4.3 (the newest patched release more than two weeks old). `npm audit --omit=dev`: 0 vulnerabilities (7 moderate dev-only remain in typescript-eslint).
+- **Lockfile lesson:** a lock resolved with Windows npm (11.6) dropped Linux-only optional packages (`@emnapi/core`, `@emnapi/runtime`), and Linux `npm ci` (Docker, Vercel) rejected it as out of sync. Resolve lockfile changes with Linux npm in a throwaway container: `docker run --rm -v <dir>:/w -w /w node:24-alpine npm install <pkg>@<ver> --package-lock-only --ignore-scripts`.
+- **Verification (local):** Vitest 12/12 (5 new); lint, typecheck, build; backend 153 passed; MCP 13/13; smoke 33/33. Busy flow through the local `/api/stories`: 429 (Retry-After 41) → 429 (10) → 202, then the same key again → `Idempotent-Replayed: true`, one story row.
+- **Not yet checked:** the countdown in a real browser (no Chrome connection in that session).
+
 ---
 
 ## 10. Decision log
@@ -622,7 +630,7 @@ Per-file test names appear in sections 7.3 and 8 (slices 1–9) and 9.5. The pla
 
 | Item | Detail | Suggested fix | Priority |
 |---|---|---|---|
-| **"The storyteller is busy, try again in N s"** | One story uses the safety model's whole per-minute allowance (2 requests / 1,800 tokens after the margin), so a new idea within about 60 s gets 429 | **Option A:** the form counts down and resubmits automatically with the same Idempotency-Key (frontend only, about 30 lines plus tests). Optionally **option C:** margin 1.0 for safeguard (3 requests a minute). Rejected: queuing ideas before checking them (breaks "never stored") | High (UX); a good `v1.0.2` |
+| ~~**"The storyteller is busy, try again in N s"**~~ **fixed in v1.0.2 (option A; section 9.6)** | One story uses the safety model's whole per-minute allowance (2 requests / 1,800 tokens after the margin), so a new idea within about 60 s gets 429 | **Option A:** the form counts down and resubmits automatically with the same Idempotency-Key (frontend only, about 30 lines plus tests). Optionally **option C:** margin 1.0 for safeguard (3 requests a minute). Rejected: queuing ideas before checking them (breaks "never stored") | High (UX); a good `v1.0.2` |
 | **Repairs from undeclared side characters** | An owl, fish or teacher speaks but isn't in `characters`; the repair fixes it but costs about 5 s | Prompt tweak: background speakers must be declared, or their words go to the narrator | Medium |
 | **Local and production share one Groq org** | If `.env` uses the same Groq account, local tests use the live site's real quota; Redis counters are separate (local vs Upstash) | Use a separate Groq org for local work, or accept it | Low |
 | **Startup traceback noise** | `ValueError: Invalid file descriptor: -1` ("Exception ignored", from an event loop cleaned up twice, probably the migration loop) | Close the migration loop explicitly | Low |
