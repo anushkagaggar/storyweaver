@@ -17,11 +17,15 @@ dependencies = [
     "alembic>=1.16",
     "redis>=5.2",
     "langfuse>=4.15,<5",
+    "httpx>=0.28",
     # Speech-to-text (V2): PyAV decodes and resamples audio in memory (FFmpeg libraries in the wheel, no
     # system ffmpeg); faster-whisper (MIT) is the local fallback / STT_ENGINE=local engine.
     "av>=15",
     "numpy>=2.0",
     "faster-whisper>=1.2",
+    # Text-to-speech fallback (V2): Kokoro-82M (Apache-2.0 weights) on onnxruntime, no torch. Its phonemizer
+    # and bundled espeak-ng are GPL-3 libraries, used server-side only (ADR-0003).
+    "kokoro-onnx>=0.6",
 ]
 
 [project.optional-dependencies]
@@ -75,5 +79,5 @@ strict = true
 packages = ["storyweaver"]
 
 [[tool.mypy.overrides]]
-module = ["spaces", "spaces.*", "torch", "torch.*", "faster_whisper", "faster_whisper.*"]
+module = ["spaces", "spaces.*", "torch", "torch.*", "faster_whisper", "faster_whisper.*", "kokoro_onnx", "kokoro_onnx.*"]
 ignore_missing_imports = true

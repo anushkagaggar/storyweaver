@@ -1,4 +1,4 @@
-"""Speech endpoints (plan §6.8): POST /v1/speech/transcribe.
+"""Speech endpoints (plan §6.8): POST /v1/speech/transcribe and POST /v1/speech/narrate.
 
 The request body is the raw recording (`Content-Type: audio/webm`, `audio/mp4`, `audio/wav`, ...), not
 multipart: Starlette spools multipart uploads over 1 MB to a temporary file on disk, and audio must never
@@ -11,11 +11,12 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request, status
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel, Field, field_validator
 
 from storyweaver.api.deps import ServicesDep, require_api_key
 from storyweaver.api.errors import problem_response
+from storyweaver.orchestrator.narration import MAX_NARRATE_CHARS
 from storyweaver.routing.router import QuotaExhaustedError
 from storyweaver.speech.audio_utils import (
     ALLOWED_AUDIO_TYPES,
@@ -28,6 +29,8 @@ from storyweaver.speech.audio_utils import (
     media_type,
 )
 from storyweaver.speech.stt import STTError, STTUnavailableError
+from storyweaver.speech.tts import TTSError, TTSRateLimitedError, TTSUnavailableError
+from storyweaver.speech.voices import CATALOGUE
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +49,12 @@ MESSAGES = {
     "no_speech": "We couldn't make out any words. Please try again, speaking clearly.",
     "stt_unavailable": "Voice input isn't working right now. Please type your idea instead.",
     "stt_busy": "Voice input is busy right now. Please try again shortly, or type your idea.",
+    "unknown_voice": "That voice isn't available.",
+    "tts_busy": "That voice is busy right now. Please try again shortly, or choose another voice.",
+    "tts_unavailable": "Reading aloud isn't working right now. Please try again later.",
 }
+
+KNOWN_VOICES = sorted(v.id for voices in CATALOGUE.values() for v in voices)
 
 
 class TranscriptOut(BaseModel):
@@ -157,4 +165,74 @@ async def transcribe(request: Request, services: ServicesDep) -> Any:
         engine=transcript.engine,
         model=transcript.model,
         duration_seconds=round(audio.duration_seconds, 2),
+    )
+
+
+class NarrateIn(BaseModel):
+    text: str = Field(min_length=1, max_length=MAX_NARRATE_CHARS)
+    voice: str | None = Field(
+        default=None, description="A voice id from either engine; default: the narrator."
+    )
+
+    @field_validator("text")
+    @classmethod
+    def _strip(cls, value: str) -> str:
+        value = " ".join(value.split())
+        if not value:
+            raise ValueError("Text must not be blank.")
+        return value
+
+
+def _retry_after(seconds: float | None) -> dict[str, str]:
+    return {"Retry-After": str(max(1, round(seconds or UNAVAILABLE_RETRY_SECONDS)))}
+
+
+@router.post(
+    "/narrate",
+    response_class=Response,
+    responses={
+        200: {"content": {"audio/mpeg": {}}, "description": "MP3; engine and voice in X-TTS-* headers"},
+        422: {"description": "Blank or too-long text, or an unknown voice"},
+        429: {"description": "An Orpheus voice was requested but its quota is used up; see Retry-After"},
+        503: {"description": "Text-to-speech unavailable"},
+    },
+)
+async def narrate(body: NarrateIn, request: Request, services: ServicesDep) -> Any:
+    if body.voice is not None and body.voice not in KNOWN_VOICES:
+        return _problem(request, status.HTTP_422_UNPROCESSABLE_CONTENT, "unknown_voice")
+    if services.narrator is None:
+        return _problem(request, status.HTTP_503_SERVICE_UNAVAILABLE, "tts_unavailable", _retry_after(None))
+    try:
+        audio, voice_id = await services.narrator.narrate_text(body.text, body.voice)
+    except QuotaExhaustedError as exc:
+        return _problem(
+            request, status.HTTP_429_TOO_MANY_REQUESTS, "tts_busy", _retry_after(exc.retry_after_seconds)
+        )
+    except TTSRateLimitedError as exc:
+        return _problem(
+            request, status.HTTP_429_TOO_MANY_REQUESTS, "tts_busy", _retry_after(exc.retry_after_seconds)
+        )
+    except TTSUnavailableError as exc:
+        logger.warning("Text-to-speech unavailable: %s", exc)
+        return _problem(request, status.HTTP_503_SERVICE_UNAVAILABLE, "tts_unavailable", _retry_after(None))
+    except TTSError as exc:
+        logger.error("Text-to-speech failed: %s", exc)
+        return _problem(request, status.HTTP_503_SERVICE_UNAVAILABLE, "tts_unavailable")
+    # Metadata only: never the text.
+    logger.info(
+        "Narrated %d characters with %s/%s: %.1f s, %d bytes.",
+        len(body.text),
+        audio.engine,
+        voice_id,
+        audio.duration_seconds,
+        len(audio.mp3),
+    )
+    return Response(
+        content=audio.mp3,
+        media_type="audio/mpeg",
+        headers={
+            "X-TTS-Engine": audio.engine,
+            "X-TTS-Voice": voice_id,
+            "X-Audio-Duration": f"{audio.duration_seconds:.2f}",
+        },
     )

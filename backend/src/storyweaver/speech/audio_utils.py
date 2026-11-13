@@ -83,9 +83,14 @@ def decode_to_mono_16k(data: bytes, *, max_seconds: float = MAX_AUDIO_SECONDS) -
     Stops decoding as soon as the audio passes `max_seconds` (plus tolerance), so a small, highly compressed
     file can't expand into minutes of samples in memory.
     """
+    return NormalizedAudio(samples=decode_mono(data, rate=SAMPLE_RATE, max_seconds=max_seconds))
+
+
+def decode_mono(data: bytes, *, rate: int, max_seconds: float) -> NDArray[np.float32]:
+    """Decode in memory to mono float32 samples at `rate`. Raises AudioDecodeError / AudioTooLongError."""
     if not data:
         raise AudioDecodeError("The recording is empty.")
-    limit = int((max_seconds + DURATION_TOLERANCE_SECONDS) * SAMPLE_RATE)
+    limit = int((max_seconds + DURATION_TOLERANCE_SECONDS) * rate)
     chunks: list[NDArray[np.int16]] = []
     total = 0
     try:
@@ -93,7 +98,7 @@ def decode_to_mono_16k(data: bytes, *, max_seconds: float = MAX_AUDIO_SECONDS) -
             if not container.streams.audio:
                 raise AudioDecodeError("The file has no audio track.")
             stream = container.streams.audio[0]
-            resampler = AudioResampler(format="s16", layout="mono", rate=SAMPLE_RATE)
+            resampler = AudioResampler(format="s16", layout="mono", rate=rate)
             for frame in container.decode(stream):
                 for out in resampler.resample(frame):
                     total += _append(chunks, out)
@@ -110,7 +115,7 @@ def decode_to_mono_16k(data: bytes, *, max_seconds: float = MAX_AUDIO_SECONDS) -
     if total == 0:
         raise AudioDecodeError("The recording has no sound data.")
     pcm = np.concatenate(chunks)
-    return NormalizedAudio(samples=(pcm.astype(np.float32) / 32768.0))
+    return pcm.astype(np.float32) / 32768.0
 
 
 def _append(chunks: list[NDArray[np.int16]], frame: av.AudioFrame) -> int:
@@ -144,4 +149,20 @@ def to_wav_bytes(audio: NormalizedAudio) -> bytes:
         wav.setsampwidth(2)
         wav.setframerate(audio.sample_rate)
         wav.writeframes(pcm.tobytes())
+    return buffer.getvalue()
+
+
+def encode_mp3(samples: NDArray[np.float32], rate: int, *, bitrate: int = 64_000) -> bytes:
+    """Mono MP3 in memory (plays everywhere, including Safari; about 8 KB per second at 64 kbps)."""
+    pcm = (np.clip(samples, -1.0, 1.0) * 32767).astype(np.int16)
+    buffer = io.BytesIO()
+    with av.open(buffer, mode="w", format="mp3") as container:
+        stream = container.add_stream("libmp3lame", rate=rate, layout="mono")
+        stream.bit_rate = bitrate
+        frame = av.AudioFrame.from_ndarray(pcm.reshape(1, -1), format="s16", layout="mono")
+        frame.sample_rate = rate
+        for packet in stream.encode(frame):
+            container.mux(packet)
+        for packet in stream.encode(None):
+            container.mux(packet)
     return buffer.getvalue()

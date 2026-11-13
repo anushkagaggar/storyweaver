@@ -11,6 +11,8 @@ services:
       REDIS_URL: redis://redis:6379/0
       BLOB_BACKEND: s3local
       S3_ENDPOINT_URL: http://s3:8333
+      # Kokoro's ONNX files live in the mounted HF cache on D:, so rebuilds don't re-download them.
+      KOKORO_DIR: /home/app/.cache/huggingface/storyweaver-kokoro
     ports:
       - "7860:7860"
     volumes:

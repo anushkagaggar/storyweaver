@@ -1,4 +1,5 @@
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, SecretStr, field_validator
@@ -49,6 +50,15 @@ class Settings(BaseSettings):
     stt_local_model: str = "small"
     stt_local_fallback: bool = True
     stt_language: str = "en"
+    # Text-to-speech (plan V2). "auto": Orpheus when the whole narration fits today's quota, else Kokoro
+    # (CPU). "orpheus" / "kokoro" force one engine. Kokoro's ONNX files (~350 MB for fp32) are downloaded
+    # to KOKORO_DIR on first use. fp32 is the default because onnxruntime runs it ~13x faster on CPU than
+    # int8 (measured 13 Nov 2026: 2.8x vs 0.2x real time).
+    tts_engine: Literal["auto", "orpheus", "kokoro"] = "auto"
+    tts_model: str = "canopylabs/orpheus-v1-english"
+    tts_max_wait_seconds: float = Field(default=120.0, ge=0)
+    kokoro_dir: Path = Path.home() / ".cache" / "storyweaver" / "kokoro"
+    kokoro_variant: Literal["int8", "fp16", "fp32"] = "fp32"
     # Run the in-process job worker (disabled in tests, which drive the worker directly).
     worker_enabled: bool = True
 

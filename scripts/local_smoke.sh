@@ -2,7 +2,8 @@
 # Smoke test for the running local stack (docker compose). Covers REST routes, the Gradio GPU endpoint and the
 # frontend. Run from the repo root in Git Bash:
 #   bash scripts/local_smoke.sh .env
-# Reads STORYWEAVER_API_KEY from the given .env without printing it. Spends one tiny Groq call and one Whisper call.
+# Reads STORYWEAVER_API_KEY from the given .env without printing it. Spends one tiny Groq call and one Whisper call;
+# text-to-speech uses Kokoro only.
 set -u
 ENV_FILE=${1:-.env}
 [ -f "$ENV_FILE" ] || { echo "Env file not found: $ENV_FILE" >&2; exit 2; }
@@ -51,6 +52,14 @@ silent=$(python -I -c "import io,sys,wave;b=io.BytesIO();w=wave.open(b,'wb');w.s
 check "transcribe silence -> audio_silent" audio_silent "$(echo "$silent" | python -I -c 'import json,sys;print(json.load(sys.stdin).get("code"))' 2>/dev/null)"
 heard=$(curl -s -m 120 -X POST $STT -H "X-API-Key: $KEY" -H 'Content-Type: audio/wav' --data-binary @$FIXTURE)
 check "transcribe speech (1 Whisper call)" True "$(echo "$heard" | python -I -c 'import json,sys;print("dragon" in json.load(sys.stdin).get("text","").lower())' 2>/dev/null)"
+
+echo "--- Text-to-speech (V2; Kokoro only, so the tiny Orpheus quota is never spent)"
+NAR=$API/v1/speech/narrate
+check "narrate without key -> 401"      401 "$(code -X POST $NAR -H 'Content-Type: application/json' -d '{"text":"Hi."}')"
+check "narrate unknown voice -> 422"    422 "$(code -X POST $NAR -H "X-API-Key: $KEY" -H 'Content-Type: application/json' -d '{"text":"Hi.","voice":"nobody"}')"
+# The first Kokoro call downloads its model (~350 MB) into the mounted cache, so allow a few minutes.
+nar=$(curl -s -m 600 -o /dev/null -w '%{http_code}|%{content_type}' -D - -X POST $NAR -H "X-API-Key: $KEY" -H 'Content-Type: application/json' -d '{"text":"Goodnight, little dragon.","voice":"af_heart"}' | tr -d '\r' | awk -F': ' 'tolower($1)=="x-tts-engine"{e=$2} END{print e}')
+check "narrate with Kokoro -> mp3"      kokoro "$nar"
 
 echo "--- Gradio GPU endpoint (ADR-0001)"
 # gradio_call <api name> [curl header args...] -> prints "<event>|<data>" of the final SSE event

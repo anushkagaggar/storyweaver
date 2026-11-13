@@ -10,16 +10,20 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from storyweaver.adapters.faster_whisper import FasterWhisper
 from storyweaver.adapters.groq_llm import GroqLLM
+from storyweaver.adapters.groq_orpheus import GroqOrpheus
 from storyweaver.adapters.groq_whisper import GroqWhisper
+from storyweaver.adapters.kokoro_tts import Kokoro
 from storyweaver.config import Settings
 from storyweaver.jobs.worker import Worker
 from storyweaver.llm.planner import StoryPlanner
 from storyweaver.observability.tracing import NoopTracer, Tracer
+from storyweaver.orchestrator.narration import Narrator
 from storyweaver.orchestrator.story_service import PlanStoryJob, StoryService, make_story_failure_hook
 from storyweaver.routing.llm import RoutedLLM
 from storyweaver.routing.router import ModelRouter
 from storyweaver.routing.store import InMemoryQuotaStore, QuotaStore, RedisQuotaStore
 from storyweaver.routing.stt import RoutedSTT
+from storyweaver.routing.tts import TTSRouter
 from storyweaver.safety.guards import GuardModels, InputGuard, OutputGuard, PolicyChecker
 from storyweaver.storage.db import create_engine, create_session_factory
 from storyweaver.storage.models import JobKind
@@ -35,6 +39,7 @@ class Services:
     groq: AsyncGroq | None = None
     stories: StoryService | None = None
     stt: RoutedSTT | None = None
+    narrator: Narrator | None = None
     worker: Worker | None = None
     tracer: Tracer = field(default_factory=NoopTracer)
     _worker_task: asyncio.Task[None] | None = field(default=None, repr=False)
@@ -74,6 +79,7 @@ def build_services(settings: Settings) -> Services:
         )
     # Speech-to-text needs no database, so it is available even when story storage isn't.
     services.stt = build_stt(settings, services.groq, router)
+    services.narrator = build_narrator(settings, services.groq, router)
 
     if settings.database_url is None:
         logger.warning("DATABASE_URL is not set: story endpoints are disabled.")
@@ -138,6 +144,35 @@ def build_stt(settings: Settings, groq_client: AsyncGroq | None, router: ModelRo
         logger.warning("Speech-to-text is disabled (no Groq key and STT_LOCAL_FALLBACK=false).")
         return None
     return RoutedSTT(router=router, primary=primary, primary_model=settings.stt_model, fallback=local)
+
+
+def build_narrator(settings: Settings, groq_client: AsyncGroq | None, router: ModelRouter) -> Narrator:
+    """Orpheus within quota, Kokoro otherwise (TTS_ENGINE picks or forces one).
+
+    Kokoro loads lazily on first use, so building it here costs nothing at startup.
+    """
+    orpheus = (
+        GroqOrpheus(groq_client, model=settings.tts_model)
+        if groq_client is not None and settings.tts_engine != "kokoro"
+        else None
+    )
+    if orpheus is None and settings.tts_engine == "orpheus":
+        logger.warning("TTS_ENGINE=orpheus but GROQ_API_KEY is not set: using Kokoro.")
+    kokoro = (
+        Kokoro(directory=settings.kokoro_dir, variant=settings.kokoro_variant)
+        if orpheus is None or settings.tts_engine != "orpheus"
+        else None
+    )
+    return Narrator(
+        TTSRouter(
+            router=router,
+            orpheus=orpheus,
+            orpheus_model=settings.tts_model,
+            kokoro=kokoro,
+            mode=settings.tts_engine if orpheus is not None else "kokoro",
+            max_wait_seconds=settings.tts_max_wait_seconds,
+        )
+    )
 
 
 def build_tracer(settings: Settings) -> Tracer:

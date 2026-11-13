@@ -39,9 +39,17 @@ Accept PyAV with its GPL-built FFmpeg, server-side only.
 - **Build FFmpeg as LGPL.** This would mean maintaining custom wheels or a custom image. It is
   disproportionate for a project that is never distributed. Rejected.
 
+## Also covered: Kokoro's phonemizer (V2 slice 2, 13 Nov 2026)
+
+The text-to-speech fallback, **kokoro-onnx** (MIT; Kokoro-82M weights Apache-2.0), turns text into phonemes
+with **phonemizer** (GPL-3) and a bundled **espeak-ng** (GPL-3, via `espeakng-loader`). The same reasoning
+applies: these are libraries that pip installs on our server, never distributed. The rule on model licences
+is unaffected, because the Kokoro weights are Apache-2.0.
+
 ## Consequences
 
 - No obligations today, and no cost: every component is free.
 - **Revisit before any distribution** (a desktop or mobile app, a published Docker image, or selling the
   software). Then either comply with the GPL or switch to an LGPL FFmpeg build.
-- Model licences are unaffected and still recorded per model. faster-whisper `small` (Systran) is MIT.
+- Model licences are unaffected and still recorded per model: faster-whisper `small` (Systran) is MIT;
+  Kokoro-82M is Apache-2.0.

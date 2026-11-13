@@ -6,7 +6,7 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
-from storyweaver.routing.quotas import limits_for
+from storyweaver.routing.quotas import DAY, Limit, limits_for
 from storyweaver.routing.store import Blocked, QuotaStore, Reservation, Usage
 
 logger = logging.getLogger(__name__)
@@ -31,8 +31,14 @@ class ModelRouter:
         self._margin = margin
         self._clock = clock
 
-    async def acquire(self, candidates: Sequence[str], usage: Usage) -> Reservation:
-        """Reserve `usage` on the first candidate with quota, in order. Raises QuotaExhaustedError."""
+    async def acquire(
+        self, candidates: Sequence[str], usage: Usage, *, windows: Callable[[Limit], bool] | None = None
+    ) -> Reservation:
+        """Reserve `usage` on the first candidate with quota, in order. Raises QuotaExhaustedError.
+
+        `windows` restricts which limits are checked and charged, e.g. only the daily ones (`daily_limits`)
+        to book a whole story's budget up front, then only the per-minute ones while pacing its requests.
+        """
         now = self._clock()
         waits: list[float] = []
         reasons: list[str] = []
@@ -42,7 +48,10 @@ class ModelRouter:
                 waits.append(cooldown)
                 reasons.append(f"{model}: cooling down after a 429")
                 continue
-            result = await self._store.reserve(model, limits_for(model).limits(self._margin), usage, now)
+            limits = [
+                limit for limit in limits_for(model).limits(self._margin) if windows is None or windows(limit)
+            ]
+            result = await self._store.reserve(model, limits, usage, now)
             if isinstance(result, Reservation):
                 return result
             blocked: Blocked = result
@@ -62,3 +71,11 @@ class ModelRouter:
 
     async def cooldown(self, model: str, seconds: float) -> None:
         await self._store.set_cooldown(model, seconds, self._clock())
+
+
+def daily_limits(limit: Limit) -> bool:
+    return limit.window_seconds >= DAY
+
+
+def short_window_limits(limit: Limit) -> bool:
+    return limit.window_seconds < DAY
