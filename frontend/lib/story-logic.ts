@@ -1,6 +1,13 @@
 // Pure helpers for the story UI (no React, no fetch) so they can be unit-tested.
 
-import { MAX_PROMPT_LENGTH, MIN_PROMPT_LENGTH, type Problem, type StoryStatus } from "@/lib/story-types";
+import {
+  MAX_PROMPT_LENGTH,
+  MIN_PROMPT_LENGTH,
+  type Problem,
+  type Scene,
+  type Story,
+  type StoryStatus,
+} from "@/lib/story-types";
 
 /** Plan §6.4: poll every 1.5 s, backing off gently, never slower than every 8 s. */
 export function pollDelayMs(attempt: number): number {
@@ -91,3 +98,72 @@ export function parseRetryAfter(value: string | null): number | null {
 }
 
 export const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** True while any page's narration is still being made, so the viewer keeps polling after the text appears. */
+export function hasPendingAudio(story: Story): boolean {
+  return story.status === "ready" && story.scenes.some((scene) => scene.audio_status === "pending");
+}
+
+/**
+ * Each poll returns freshly signed audio URLs. Swapping the URL of a page that is already playing would restart
+ * it, so a page that was ready keeps the URL it had.
+ */
+export function mergeAudioUrls(previous: Story | null, next: Story): Story {
+  if (!previous) return next;
+  const known = new Map<number, string>();
+  for (const scene of previous.scenes) {
+    if (scene.audio_status === "ready" && scene.audio_url) known.set(scene.idx, scene.audio_url);
+  }
+  return {
+    ...next,
+    scenes: next.scenes.map((scene: Scene) => {
+      const url = known.get(scene.idx);
+      return scene.audio_status === "ready" && url ? { ...scene, audio_url: url } : scene;
+    }),
+  };
+}
+
+/** What to show in place of the player for a page without playable audio. Null when there's nothing to say. */
+export function audioNote(scene: Scene): string | null {
+  if (scene.audio_status === "pending") return "Getting the reading voice ready…";
+  if (scene.audio_status === "failed") return "Sorry, we couldn't make the reading voice for this page.";
+  return null;
+}
+
+/** Recorder formats in order of preference: Chrome/Firefox record webm or ogg (Opus), Safari records mp4 (AAC). */
+export const RECORDER_MIME_TYPES = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"] as const;
+
+/** The first format the browser can record, or undefined to let it choose its default. */
+export function pickRecorderMimeType(isSupported: (type: string) => boolean): string | undefined {
+  return RECORDER_MIME_TYPES.find((type) => isSupported(type));
+}
+
+/** Why the microphone couldn't start, as a sentence a parent can act on. `name` is the DOMException name. */
+export function microphoneMessage(name: string | undefined): string {
+  switch (name) {
+    case "NotAllowedError":
+    case "SecurityError":
+      return "We need your permission to use the microphone. Allow it in your browser, or type your idea instead.";
+    case "NotFoundError":
+    case "OverconstrainedError":
+      return "We couldn't find a microphone. Please type your idea instead.";
+    case "NotReadableError":
+    case "AbortError":
+      return "The microphone is busy in another app. Close it and try again, or type your idea.";
+    default:
+      return "The microphone isn't working. Please type your idea instead.";
+  }
+}
+
+/** The backend's voice errors already carry a parent-facing sentence in `detail`; fall back by status. */
+export function transcribeMessage(problem: Problem): string {
+  if (problem.detail && problem.status !== 502 && problem.status !== 504) return problem.detail;
+  if (problem.status === 413) return "That recording is too big. Please keep it short.";
+  return "Voice input isn't working right now. Please type your idea instead.";
+}
+
+/** m:ss for the recorder's timer. */
+export function formatClock(seconds: number): string {
+  const whole = Math.max(0, Math.floor(seconds));
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
+}

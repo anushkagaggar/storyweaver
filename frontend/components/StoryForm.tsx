@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 
+import { MicRecorder } from "@/components/MicRecorder";
 import { createStory } from "@/lib/story-client";
 import { autoRetryDelaySeconds, busyCountdownMessage, validatePrompt } from "@/lib/story-logic";
 import { MAX_PROMPT_LENGTH, SCENE_CHOICES, type SceneChoice } from "@/lib/story-types";
@@ -99,6 +100,8 @@ export function StoryForm() {
       <p id={`${promptId}-count`} className="hint">
         {prompt.length}/{MAX_PROMPT_LENGTH}
       </p>
+
+      <MicRecorder disabled={submitting} onTranscript={(text) => setPrompt(text.slice(0, MAX_PROMPT_LENGTH))} />
 
       <fieldset disabled={submitting}>
         <legend>How many pages?</legend>

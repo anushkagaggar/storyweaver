@@ -1,11 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { StoryBook } from "@/components/StoryBook";
 import { fetchStory } from "@/lib/story-client";
-import { FINAL_STATUSES, pollDelayMs, statusHint, statusMessage } from "@/lib/story-logic";
+import { FINAL_STATUSES, hasPendingAudio, mergeAudioUrls, pollDelayMs, statusHint, statusMessage } from "@/lib/story-logic";
 import type { Story } from "@/lib/story-types";
 
 type View =
@@ -13,9 +13,16 @@ type View =
   | { kind: "story"; story: Story }
   | { kind: "error"; message: string; final: boolean };
 
-/** Polls /api/stories/{id} (plan §6.4: every 1.5 s with backoff) until the story is ready or failed. */
+// Narration finishes after the text, so a ready story is polled a while longer (about 10 minutes at most).
+const MAX_AUDIO_POLLS = 120;
+
+/**
+ * Polls /api/stories/{id} (plan §6.4: every 1.5 s with backoff) until the story is ready or failed, then keeps
+ * polling until every page's narration has arrived.
+ */
 export function StoryViewer({ id }: { id: string }) {
   const [view, setView] = useState<View>({ kind: "loading" });
+  const latest = useRef<Story | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -25,8 +32,10 @@ export function StoryViewer({ id }: { id: string }) {
       const result = await fetchStory(id);
       if (cancelled) return;
       if (result.ok) {
-        setView({ kind: "story", story: result.value });
-        if (FINAL_STATUSES.has(result.value.status)) return;
+        const story = mergeAudioUrls(latest.current, result.value);
+        latest.current = story;
+        setView({ kind: "story", story });
+        if (FINAL_STATUSES.has(story.status) && !(hasPendingAudio(story) && attempt < MAX_AUDIO_POLLS)) return;
       } else {
         const final = result.status === 404;
         setView({ kind: "error", message: result.message, final });

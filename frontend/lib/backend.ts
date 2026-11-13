@@ -36,14 +36,15 @@ const FORWARDED_HEADERS = ["content-type", "retry-after", "location", "idempoten
  */
 export async function forwardToBackend(
   path: string,
-  init: { method?: "GET" | "POST"; body?: string; headers?: Record<string, string>; timeoutMs?: number } = {},
+  init: { method?: "GET" | "POST"; body?: string | Uint8Array; headers?: Record<string, string>; timeoutMs?: number } = {},
 ): Promise<Response> {
   const { baseUrl, apiKey } = backendConfig();
   try {
     const upstream = await fetch(`${baseUrl}${path}`, {
       method: init.method ?? "GET",
-      body: init.body,
-      headers: { "X-API-Key": apiKey, ...(init.body ? { "Content-Type": "application/json" } : {}), ...init.headers },
+      // A string body is JSON unless the caller says otherwise; binary bodies (voice recordings) must set their own type.
+      body: init.body as BodyInit | undefined,
+      headers: { "X-API-Key": apiKey, ...(typeof init.body === "string" ? { "Content-Type": "application/json" } : {}), ...init.headers },
       cache: "no-store",
       signal: AbortSignal.timeout(init.timeoutMs ?? 30_000),
     });

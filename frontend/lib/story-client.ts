@@ -1,7 +1,7 @@
 // Browser-side calls to our own /api routes (never the backend directly; the API key stays on the server).
 
-import { parseRetryAfter, problemMessage } from "@/lib/story-logic";
-import type { CreateStoryResponse, Problem, SceneChoice, Story } from "@/lib/story-types";
+import { parseRetryAfter, problemMessage, transcribeMessage } from "@/lib/story-logic";
+import type { CreateStoryResponse, Problem, SceneChoice, Story, Transcript } from "@/lib/story-types";
 
 export type Failure = { ok: false; message: string; status: number; retryAfter: number | null };
 export type Result<T> = { ok: true; value: T } | Failure;
@@ -42,5 +42,28 @@ export async function fetchStory(id: string): Promise<Result<Story>> {
     return { ok: true, value: (await response.json()) as Story };
   } catch {
     return { ok: false, message: "Reconnecting…", status: 0, retryAfter: null };
+  }
+}
+
+/** Send a recording for transcription. The audio goes to our own /api route, which holds the API key. */
+export async function transcribeAudio(recording: Blob): Promise<Result<Transcript>> {
+  try {
+    const response = await fetch("/api/speech/transcribe", {
+      method: "POST",
+      headers: { "Content-Type": recording.type || "audio/webm" },
+      body: recording,
+    });
+    if (!response.ok) {
+      let problem: Problem = { status: response.status };
+      try {
+        problem = { ...((await response.json()) as Problem), status: response.status };
+      } catch {
+        // Non-JSON error body: fall back to the status code.
+      }
+      return { ok: false, message: transcribeMessage(problem), status: response.status, retryAfter: parseRetryAfter(response.headers.get("retry-after")) };
+    }
+    return { ok: true, value: (await response.json()) as Transcript };
+  } catch {
+    return { ok: false, message: "We couldn't reach the storyteller. Check your connection and try again.", status: 0, retryAfter: null };
   }
 }

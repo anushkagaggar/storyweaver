@@ -235,3 +235,30 @@ pre {
   white-space: pre-wrap;
   font-size: 0.8rem;
 }
+
+/* Voice input and narration (V2) */
+.mic {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.mic .mic-message {
+  flex-basis: 100%;
+  min-height: 1.2em;
+}
+
+button.secondary {
+  background: transparent;
+  color: var(--accent);
+}
+
+.page-audio {
+  width: 100%;
+  margin-top: 1rem;
+}
+
+.audio-note {
+  margin-top: 1rem;
+}

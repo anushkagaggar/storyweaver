@@ -90,6 +90,11 @@ check "api/stories unsafe idea -> 422"  "unsafe_input|urls" "$(echo "$unsafe" | 
 check "api/stories bad JSON -> 400"     400 "$(code -X POST $WEB/api/stories -H 'Content-Type: application/json' -d '{bad')"
 check "api/stories/<bad id> -> 404"     404 "$(code $WEB/api/stories/not-a-uuid)"
 check "api/stories/<unknown> -> 404"    404 "$(code $WEB/api/stories/00000000-0000-4000-8000-000000000000)"
+# Voice proxy: the Vercel route holds the API key and checks the recording before forwarding it.
+heard_web=$(curl -s -m 120 -X POST $WEB/api/speech/transcribe -H 'Content-Type: audio/wav' --data-binary @$FIXTURE)
+check "web transcribe speech -> text"   True "$(echo "$heard_web" | python -I -c 'import json,sys;print("dragon" in json.load(sys.stdin).get("text","").lower())' 2>/dev/null)"
+check "web transcribe JSON -> 415"      415 "$(code -X POST $WEB/api/speech/transcribe -H 'Content-Type: application/json' -d '{}')"
+check "web transcribe 5 MB -> 413"      413 "$(head -c 5000000 /dev/zero | curl -s -o /dev/null -w '%{http_code}' -m 60 -X POST $WEB/api/speech/transcribe -H 'Content-Type: audio/webm' --data-binary @-)"
 status=$(curl -s -m 180 $WEB/api/status)
 check "status: backend ok"  True "$(echo "$status" | python -I -c 'import json,sys;print(json.load(sys.stdin)["backend"]["ok"])')"
 check "status: gpu ok"      True "$(echo "$status" | python -I -c 'import json,sys;print(json.load(sys.stdin)["gpu"]["ok"])')"
