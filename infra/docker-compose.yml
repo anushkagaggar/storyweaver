@@ -9,8 +9,15 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://storyweaver:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/storyweaver
       REDIS_URL: redis://redis:6379/0
-      BLOB_BACKEND: s3local
+      # Narration audio goes to the local SeaweedFS (S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY from .env).
+      # Presigned URLs are signed for localhost:8333, the host the browser uses.
       S3_ENDPOINT_URL: http://s3:8333
+      S3_PUBLIC_ENDPOINT_URL: http://localhost:8333
+      S3_BUCKET: storyweaver-audio
+      S3_CREATE_BUCKET: "true"
+      # Kokoro by default: local and production share one Groq organisation, and Orpheus's free tier is
+      # about one story a day. Set TTS_ENGINE=auto in .env to try Orpheus locally.
+      TTS_ENGINE: ${TTS_ENGINE:-kokoro}
       # Kokoro's ONNX files live in the mounted HF cache on D:, so rebuilds don't re-download them.
       KOKORO_DIR: /home/app/.cache/huggingface/storyweaver-kokoro
     ports:
@@ -74,7 +81,7 @@ services:
       timeout: 3s
       retries: 10
 
-  # Local S3-compatible stand-in for Cloudflare R2. MinIO's images were removed from Docker Hub,
+  # Local S3-compatible stand-in for Backblaze B2 (ADR-0004). MinIO's images were removed from Docker Hub,
   # so this uses SeaweedFS (Apache-2.0). S3 API on :8333; credentials are a global admin identity.
   s3:
     image: chrislusf/seaweedfs:4.48

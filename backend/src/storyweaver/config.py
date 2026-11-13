@@ -59,13 +59,33 @@ class Settings(BaseSettings):
     tts_max_wait_seconds: float = Field(default=120.0, ge=0)
     kokoro_dir: Path = Path.home() / ".cache" / "storyweaver" / "kokoro"
     kokoro_variant: Literal["int8", "fp16", "fp32"] = "fp32"
+    # Object storage for narration audio (plan V2, ADR-0004): any S3-compatible store. SeaweedFS locally,
+    # Backblaze B2 in production. Off unless the endpoint and both keys are set; stories then have no audio.
+    s3_endpoint_url: str | None = None
+    s3_public_endpoint_url: str | None = None  # browser-facing host when it differs (local Docker)
+    s3_region: str = "us-east-1"
+    s3_bucket: str = "storyweaver-audio"
+    s3_access_key_id: SecretStr | None = None
+    s3_secret_access_key: SecretStr | None = None
+    s3_create_bucket: bool = False
+    # Lifetime of the presigned audio URLs in GET /v1/stories/{id}. The UI re-polls for fresh ones.
+    audio_url_ttl_seconds: int = Field(default=3600, ge=60, le=7 * 24 * 3600)
     # Run the in-process job worker (disabled in tests, which drive the worker directly).
     worker_enabled: bool = True
 
     # Comma-separated list of origins allowed by CORS.
     allowed_origins: str = "http://localhost:3000"
 
-    @field_validator("groq_api_key", "langfuse_public_key", "langfuse_secret_key", mode="before")
+    @field_validator(
+        "groq_api_key",
+        "langfuse_public_key",
+        "langfuse_secret_key",
+        "s3_endpoint_url",
+        "s3_public_endpoint_url",
+        "s3_access_key_id",
+        "s3_secret_access_key",
+        mode="before",
+    )
     @classmethod
     def _blank_key_is_unset(cls, value: object) -> object:
         return None if isinstance(value, str) and not value.strip() else value
@@ -77,6 +97,10 @@ class Settings(BaseSettings):
     @property
     def tracing_enabled(self) -> bool:
         return self.langfuse_public_key is not None and self.langfuse_secret_key is not None
+
+    @property
+    def blob_storage_enabled(self) -> bool:
+        return all((self.s3_endpoint_url, self.s3_access_key_id, self.s3_secret_access_key))
 
     @property
     def planner_model_id(self) -> str:

@@ -8,7 +8,7 @@ StoryWeaver is a voice-first, illustrated children's audiobook generator (text �
 
 `plan.md` is the source of truth. **V0 is done (14 Oct 2026):** frontend live on Vercel (`https://storyweaver-eight-woad.vercel.app`, root dir `frontend`), backend on the ZeroGPU Space `gaggaranushka/storyweaver` (`https://gaggaranushka-storyweaver.hf.space`). V1+ are still designs.
 
-Deploys: pushing to `main` redeploys Vercel; pushing a `v*` tag runs CI and then uploads `backend/` to the Space. Vercel env: `STORYWEAVER_API_URL` (the `*.hf.space` URL, never `huggingface.co/spaces/...`), `STORYWEAVER_API_KEY`, and `HF_TOKEN` (read-only; GPU quota). The write HF token lives only in GitHub Actions secrets. Space Secrets: `STORYWEAVER_API_KEY`, `GROQ_API_KEY`; Variables: `APP_ENV=prod`, `ALLOWED_ORIGINS` (Vercel domain only, no trailing slash). Before you implement anything, read the matching version section of `plan.md` (§10). Each version has its own task list and exit criteria. <!-- pragma: allowlist secret (names only, no values) -->
+Deploys: pushing to `main` redeploys Vercel; pushing a `v*` tag runs CI and then uploads `backend/` to the Space. Vercel env: `STORYWEAVER_API_URL` (the `*.hf.space` URL, never `huggingface.co/spaces/...`), `STORYWEAVER_API_KEY`, and `HF_TOKEN` (read-only; GPU quota). The write HF token lives only in GitHub Actions secrets. Space Secrets: `STORYWEAVER_API_KEY`, `GROQ_API_KEY`, and from V2 `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` (B2 key limited to the bucket). Variables: `APP_ENV=prod`, `ALLOWED_ORIGINS` (Vercel domain only, no trailing slash), and from V2 `S3_ENDPOINT_URL`, `S3_REGION`, `S3_BUCKET`. Before you implement anything, read the matching version section of `plan.md` (§10). Each version has its own task list and exit criteria. <!-- pragma: allowlist secret (names only, no values) -->
 
 Two deviations from the plan's layout:
 - Backend tests live in `backend/tests/`, not the root `tests/`.
@@ -21,7 +21,7 @@ Two deviations from the plan's layout:
 - **Backend:** Python 3.12 (managed with `uv`). The app is a **`gr.Server`** (Gradio Server mode, a FastAPI subclass) started with `server.launch()`; see the ZeroGPU rule below. It deploys to a **Hugging Face ZeroGPU Gradio Space**, which is why there is no Docker Space and `backend/Dockerfile` is only a local mirror of the Space.
 - **Frontend:** Next.js (App Router) and TypeScript, deployed to **Vercel Hobby**.
 - **MCP server:** FastMCP in `mcp_server/`. It uses stdio until V9, then Streamable HTTP on the Space.
-- **Data and infrastructure:** Neon Postgres with pgvector, Upstash Redis, Cloudflare R2 (SeaweedFS S3 locally, because MinIO images are no longer published; the planned `MinioBlobStore` becomes a generic S3 adapter serving both), Langfuse, Grafana Cloud, MLflow, DVC + DagsHub and Prefect OSS.
+- **Data and infrastructure:** Neon Postgres with pgvector, Upstash Redis, Backblaze B2 for narration audio (ADR-0004; R2 needs a card), with SeaweedFS S3 locally, because MinIO images are no longer published. One `S3BlobStore` (`storage/blob.py`, boto3) serves both, through private buckets and presigned GET URLs, Langfuse, Grafana Cloud, MLflow, DVC + DagsHub and Prefect OSS.
 - **Windows host:** run everything in Linux containers. Celery isn't supported on Windows, so the plan uses an in-process async worker. Keep the repo, caches, datasets and the Docker disk on **D:**, because C: is nearly full.
 
 ## Commands

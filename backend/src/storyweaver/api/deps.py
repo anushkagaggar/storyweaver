@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from storyweaver.config import Settings, get_settings
 from storyweaver.orchestrator.story_service import StoryService
 from storyweaver.services import Services
+from storyweaver.storage.blob import BlobStore
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 
@@ -68,3 +69,11 @@ def get_sessions(services: ServicesDep) -> async_sessionmaker[AsyncSession]:
 
 
 SessionsDep = Annotated[async_sessionmaker[AsyncSession], Depends(get_sessions)]
+
+
+def get_blob_store(services: ServicesDep) -> BlobStore | None:
+    """None when object storage isn't configured: stories are then served without audio URLs."""
+    return services.blobs
+
+
+BlobStoreDep = Annotated[BlobStore | None, Depends(get_blob_store)]

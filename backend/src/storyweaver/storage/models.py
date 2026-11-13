@@ -42,11 +42,14 @@ class StoryStatus(StrEnum):
 
 
 class SceneStatus(StrEnum):
-    TEXT_READY = "text_ready"
+    TEXT_READY = "text_ready"  # text shown; narration queued (or none, when stories.tts_engine is null)
+    AUDIO_READY = "audio_ready"
+    AUDIO_FAILED = "audio_failed"  # narration gave up; the page still reads fine without it
 
 
 class JobKind(StrEnum):
     PLAN = "plan"
+    TTS = "tts"  # narrate one scene: payload {"story_id", "idx"}
 
 
 class JobStatus(StrEnum):

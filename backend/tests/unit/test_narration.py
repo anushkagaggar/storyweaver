@@ -51,13 +51,13 @@ def test_scene_lines_use_each_speakers_voice_and_unknown_speakers_get_the_narrat
     story = PlannedStory.model_validate(planned_story).to_story(age_band="4-6", story_key="s")
     scene = story.scenes[0]
     voices = assign_voices("kokoro", [c.id for c in story.characters], "s")
-    lines = scene_lines(scene, voices)
+    lines = scene_lines(scene.lines, voices)
     assert [line.text for line in lines] == [line.text for line in scene.lines]
     for spoken, line in zip(lines, scene.lines, strict=True):
         assert spoken.voice == voices[line.speaker]
 
     only_narrator = {NARRATOR: voices[NARRATOR]}
-    assert {line.voice for line in scene_lines(scene, only_narrator)} == {voices[NARRATOR]}
+    assert {line.voice for line in scene_lines(scene.lines, only_narrator)} == {voices[NARRATOR]}
 
 
 async def test_narrate_text_uses_orpheus_when_it_fits() -> None:

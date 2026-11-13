@@ -35,9 +35,18 @@ class JobQueue:
         self._session = session
 
     async def enqueue(
-        self, kind: JobKind, payload: dict[str, Any], story_id: uuid.UUID | None = None
+        self,
+        kind: JobKind,
+        payload: dict[str, Any],
+        story_id: uuid.UUID | None = None,
+        *,
+        order: int = 0,
     ) -> JobRow:
-        """Insert a job, or return the existing job with the same kind and payload (idempotent)."""
+        """Insert a job, or return the existing job with the same kind and payload (idempotent).
+
+        Jobs enqueued in one transaction share now(); `order` (milliseconds) makes the worker take them in
+        that order, e.g. scene 1's narration first.
+        """
         digest = payload_hash(kind, payload)
         await self._session.execute(
             insert(JobRow)
@@ -49,6 +58,7 @@ class JobQueue:
                 attempts=0,
                 payload=payload,
                 payload_hash=digest,
+                run_after=func.now() + timedelta(milliseconds=order),
             )
             .on_conflict_do_nothing(index_elements=["payload_hash"])
         )

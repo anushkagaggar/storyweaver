@@ -5,7 +5,8 @@ import logging
 import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -44,6 +45,8 @@ class JobContext:
     story_id: uuid.UUID | None
     attempts: int
     is_last_attempt: bool
+    kind: JobKind = JobKind.PLAN
+    payload: dict[str, Any] = field(default_factory=dict)
 
 
 GENERIC_FAILURE_DETAIL = "The story could not be generated. Please try again."
@@ -97,8 +100,10 @@ class Worker:
                 story_id=job.story_id,
                 attempts=job.attempts,
                 is_last_attempt=job.attempts >= MAX_ATTEMPTS,
+                kind=JobKind(job.kind),
+                payload=dict(job.payload),
             )
-            kind = JobKind(job.kind)
+            kind = context.kind
 
         logger.info("Running job %s (%s), attempt %d.", context.job_id, kind, context.attempts)
         try:

@@ -7,13 +7,13 @@ PyAV MP3 encode does the same without pydub (which relies on the deprecated `aud
 
 import asyncio
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
 import numpy as np
 from numpy.typing import NDArray
 
-from storyweaver.domain.story import NARRATOR, Scene
+from storyweaver.domain.story import NARRATOR, Line, Scene
 from storyweaver.routing.tts import TTSRouter
 from storyweaver.speech.audio_utils import encode_mp3
 from storyweaver.speech.tts import (
@@ -49,14 +49,14 @@ def _silence(seconds: float) -> NDArray[np.float32]:
     return np.zeros(int(seconds * TTS_SAMPLE_RATE), dtype=np.float32)
 
 
-def scene_lines(scene: Scene, voices: Mapping[str, str]) -> list[SpokenLine]:
-    """The scene's lines with voices; an unknown speaker is read by the narrator (never silently dropped)."""
-    return [SpokenLine(voices.get(line.speaker, voices[NARRATOR]), line.text) for line in scene.lines]
+def scene_lines(lines: Iterable[Line], voices: Mapping[str, str]) -> list[SpokenLine]:
+    """A scene's lines with voices; an unknown speaker is read by the narrator (never silently dropped)."""
+    return [SpokenLine(voices.get(line.speaker, voices[NARRATOR]), line.text) for line in lines]
 
 
 class Narrator:
     def __init__(self, tts: TTSRouter) -> None:
-        self._tts = tts
+        self.tts = tts
 
     async def narrate(self, lines: Sequence[SpokenLine], engine: EngineName) -> NarratedAudio:
         parts: list[NDArray[np.float32]] = []
@@ -66,7 +66,7 @@ class Narrator:
             for chunk_index, chunk in enumerate(split_for_tts(line.text)):
                 if chunk_index:
                     parts.append(_silence(PAUSE_BETWEEN_CHUNKS))
-                parts.append((await self._tts.synthesize(engine, chunk, line.voice)).samples)
+                parts.append((await self.tts.synthesize(engine, chunk, line.voice)).samples)
         samples = np.concatenate(parts) if parts else _silence(0.1)
         mp3 = await asyncio.to_thread(encode_mp3, samples, TTS_SAMPLE_RATE)
         return NarratedAudio(mp3=mp3, duration_seconds=len(samples) / TTS_SAMPLE_RATE, engine=engine)
@@ -74,7 +74,7 @@ class Narrator:
     async def narrate_scene(
         self, scene: Scene, voices: Mapping[str, str], engine: EngineName
     ) -> NarratedAudio:
-        return await self.narrate(scene_lines(scene, voices), engine)
+        return await self.narrate(scene_lines(scene.lines, voices), engine)
 
     async def narrate_text(self, text: str, voice_id: str | None = None) -> tuple[NarratedAudio, str]:
         """One-off narration (POST /v1/speech/narrate): returns the audio and the voice used.
@@ -85,10 +85,10 @@ class Narrator:
         """
         if voice_id is not None:
             # Books Orpheus's budget or raises QuotaExhaustedError; never silently switches engine.
-            engine = await self._tts.choose([text], require=_engine_of(voice_id))
+            engine = await self.tts.choose([text], require=engine_of(voice_id))
             return await self.narrate([SpokenLine(voice_id, text)], engine), voice_id
 
-        engine = await self._tts.choose([text])
+        engine = await self.tts.choose([text])
         try:
             narrator = NARRATOR_VOICE[engine]
             return await self.narrate([SpokenLine(narrator, text)], engine), narrator
@@ -100,7 +100,7 @@ class Narrator:
             return await self.narrate([SpokenLine(narrator, text)], "kokoro"), narrator
 
 
-def _engine_of(voice_id: str) -> EngineName:
+def engine_of(voice_id: str) -> EngineName:
     for engine, voices in CATALOGUE.items():
         if any(v.id == voice_id for v in voices):
             return engine

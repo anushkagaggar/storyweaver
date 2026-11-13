@@ -26,6 +26,8 @@ dependencies = [
     # Text-to-speech fallback (V2): Kokoro-82M (Apache-2.0 weights) on onnxruntime, no torch. Its phonemizer
     # and bundled espeak-ng are GPL-3 libraries, used server-side only (ADR-0003).
     "kokoro-onnx>=0.6",
+    # Object storage (V2): boto3 (Apache-2.0) speaks S3 to SeaweedFS locally and Backblaze B2 in production.
+    "boto3>=1.36",
 ]
 
 [project.optional-dependencies]
@@ -77,6 +79,11 @@ python_version = "3.12"
 mypy_path = "src"
 strict = true
 packages = ["storyweaver"]
+
+[[tool.mypy.overrides]]
+# boto3 ships no type hints; storage/blob.py is the only module that touches it.
+module = ["boto3", "boto3.*", "botocore", "botocore.*"]
+ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["spaces", "spaces.*", "torch", "torch.*", "faster_whisper", "faster_whisper.*", "kokoro_onnx", "kokoro_onnx.*"]

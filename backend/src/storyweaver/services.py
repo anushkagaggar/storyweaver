@@ -14,10 +14,11 @@ from storyweaver.adapters.groq_orpheus import GroqOrpheus
 from storyweaver.adapters.groq_whisper import GroqWhisper
 from storyweaver.adapters.kokoro_tts import Kokoro
 from storyweaver.config import Settings
-from storyweaver.jobs.worker import Worker
+from storyweaver.jobs.worker import Handler, Worker
 from storyweaver.llm.planner import StoryPlanner
 from storyweaver.observability.tracing import NoopTracer, Tracer
 from storyweaver.orchestrator.narration import Narrator
+from storyweaver.orchestrator.narration_jobs import NarrateSceneJob, StoryNarration
 from storyweaver.orchestrator.story_service import PlanStoryJob, StoryService, make_story_failure_hook
 from storyweaver.routing.llm import RoutedLLM
 from storyweaver.routing.router import ModelRouter
@@ -25,6 +26,7 @@ from storyweaver.routing.store import InMemoryQuotaStore, QuotaStore, RedisQuota
 from storyweaver.routing.stt import RoutedSTT
 from storyweaver.routing.tts import TTSRouter
 from storyweaver.safety.guards import GuardModels, InputGuard, OutputGuard, PolicyChecker
+from storyweaver.storage.blob import BlobStore, S3BlobStore, S3Config
 from storyweaver.storage.db import create_engine, create_session_factory
 from storyweaver.storage.models import JobKind
 
@@ -40,6 +42,7 @@ class Services:
     stories: StoryService | None = None
     stt: RoutedSTT | None = None
     narrator: Narrator | None = None
+    blobs: BlobStore | None = None
     worker: Worker | None = None
     tracer: Tracer = field(default_factory=NoopTracer)
     _worker_task: asyncio.Task[None] | None = field(default=None, repr=False)
@@ -114,13 +117,39 @@ def build_services(settings: Settings) -> Services:
         max_tokens=settings.planner_max_tokens,
         temperature=settings.planner_temperature,
     )
+    services.blobs = build_blob_store(settings)
+    narration = None
+    if services.blobs is None:
+        logger.warning("Object storage is not configured (S3_*): stories will have no narration.")
+    elif services.narrator is not None:
+        narration = StoryNarration(services.narrator)
     if settings.worker_enabled:
+        handlers: dict[JobKind, Handler] = {
+            JobKind.PLAN: PlanStoryJob(services.sessions, planner, OutputGuard(policy), narration)
+        }
+        if narration is not None and services.blobs is not None:
+            handlers[JobKind.TTS] = NarrateSceneJob(services.sessions, narration.narrator, services.blobs)
         services.worker = Worker(
-            services.sessions,
-            {JobKind.PLAN: PlanStoryJob(services.sessions, planner, OutputGuard(policy))},
-            on_final_failure=make_story_failure_hook(services.sessions),
+            services.sessions, handlers, on_final_failure=make_story_failure_hook(services.sessions)
         )
     return services
+
+
+def build_blob_store(settings: Settings) -> BlobStore | None:
+    if not settings.blob_storage_enabled:
+        return None
+    assert settings.s3_endpoint_url and settings.s3_access_key_id and settings.s3_secret_access_key  # noqa: S101
+    return S3BlobStore(
+        S3Config(
+            endpoint_url=settings.s3_endpoint_url,
+            public_endpoint_url=settings.s3_public_endpoint_url,
+            region=settings.s3_region,
+            bucket=settings.s3_bucket,
+            access_key_id=settings.s3_access_key_id.get_secret_value(),
+            secret_access_key=settings.s3_secret_access_key.get_secret_value(),
+            create_bucket=settings.s3_create_bucket,
+        )
+    )
 
 
 def build_stt(settings: Settings, groq_client: AsyncGroq | None, router: ModelRouter) -> RoutedSTT | None:

@@ -1,13 +1,14 @@
 """Data access for stories. Repositories never commit; the caller controls the transaction."""
 
 import uuid
+from collections.abc import Mapping
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from storyweaver.domain.story import AgeBand, Character, Line, Scene, Story
-from storyweaver.storage.models import CharacterRow, SceneRow, StoryRow, StoryStatus
+from storyweaver.storage.models import CharacterRow, SceneRow, SceneStatus, StoryRow, StoryStatus
 
 
 class StoryRepository:
@@ -97,6 +98,24 @@ class StoryRepository:
                 for s in plan.scenes
             ]
         )
+        await self._session.flush()
+
+    async def set_narration(self, story_row: StoryRow, engine: str, voices: Mapping[str, str]) -> None:
+        """Record the story's TTS engine and each character's voice (chosen once per story)."""
+        story_row.tts_engine = engine
+        for character in story_row.characters:
+            character.voice_id = voices.get(character.char_key)
+        await self._session.flush()
+
+    async def get_scene(self, story_id: uuid.UUID, idx: int) -> SceneRow | None:
+        result = await self._session.execute(
+            select(SceneRow).where(SceneRow.story_id == story_id, SceneRow.idx == idx)
+        )
+        return result.scalar_one_or_none()
+
+    async def set_scene_audio(self, scene: SceneRow, *, audio_key: str | None, status: SceneStatus) -> None:
+        scene.audio_key = audio_key
+        scene.status = status
         await self._session.flush()
 
 

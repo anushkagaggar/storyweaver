@@ -2,13 +2,13 @@
 
 import uuid
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from storyweaver.api.deps import SessionsDep, StoryServiceDep, require_api_key
+from storyweaver.api.deps import BlobStoreDep, SessionsDep, SettingsDep, StoryServiceDep, require_api_key
 from storyweaver.api.errors import problem_response
 from storyweaver.domain.story import AgeBand, Line, SceneCount
 from storyweaver.jobs.queue import JobQueue
@@ -18,7 +18,8 @@ from storyweaver.orchestrator.story_service import (
     UnsafeInputError,
 )
 from storyweaver.safety.guards import BRANDS
-from storyweaver.storage.models import StoryStatus
+from storyweaver.storage.blob import BlobStore
+from storyweaver.storage.models import SceneRow, SceneStatus, StoryRow, StoryStatus
 from storyweaver.storage.repositories import StoryRepository
 
 router = APIRouter(prefix="/v1", tags=["stories"], dependencies=[Depends(require_api_key)])
@@ -57,12 +58,18 @@ class CharacterOut(BaseModel):
     visual: str
 
 
+AudioStatus = Literal["none", "pending", "ready", "failed"]
+
+
 class SceneOut(BaseModel):
     idx: int
     text: str
     lines: list[Line]
     image_url: str | None = None  # V3
-    audio_url: str | None = None  # V2
+    # A presigned MP3 URL, valid for AUDIO_URL_TTL_SECONDS; poll the story again for a fresh one.
+    audio_url: str | None = None
+    # "pending" while the page's narration is queued; "none" when the story has no narration.
+    audio_status: AudioStatus = "none"
 
 
 # Parent-facing notes for adapted ideas (stories.adaptation).
@@ -87,6 +94,8 @@ class StoryOut(BaseModel):
     characters: list[CharacterOut]
     scenes: list[SceneOut]
     notice: str | None = None
+    # "orpheus" or "kokoro" once narration is queued; null for a story without narration.
+    tts_engine: str | None = None
     error: StoryError | None
     created_at: datetime
     updated_at: datetime
@@ -158,7 +167,9 @@ async def create_story(
 
 
 @router.get("/stories/{story_id}")
-async def get_story(story_id: uuid.UUID, sessions: SessionsDep) -> StoryOut:
+async def get_story(
+    story_id: uuid.UUID, sessions: SessionsDep, blobs: BlobStoreDep, settings: SettingsDep
+) -> StoryOut:
     async with sessions() as session:
         story = await StoryRepository(session).get(story_id)
     if story is None:
@@ -178,13 +189,34 @@ async def get_story(story_id: uuid.UUID, sessions: SessionsDep) -> StoryOut:
             for c in (story.characters if visible else [])
         ],
         scenes=[
-            SceneOut(idx=s.idx, text=s.text, lines=[Line.model_validate(line) for line in s.lines])
+            _scene_out(story, s, blobs, settings.audio_url_ttl_seconds)
             for s in (story.scenes if visible else [])
         ],
         notice=ADAPTATION_NOTICES.get(story.adaptation or "") if visible else None,
+        tts_engine=story.tts_engine if visible else None,
         error=StoryError(code=story.error_code, detail=story.error_detail) if story.error_code else None,
         created_at=story.created_at,
         updated_at=story.updated_at,
+    )
+
+
+def _scene_out(story: StoryRow, scene: SceneRow, blobs: BlobStore | None, ttl: int) -> SceneOut:
+    audio_url = None
+    audio_status: AudioStatus = "none"
+    if story.tts_engine is not None:
+        if scene.status == SceneStatus.AUDIO_FAILED:
+            audio_status = "failed"
+        elif scene.status == SceneStatus.AUDIO_READY and scene.audio_key and blobs is not None:
+            audio_url = blobs.presigned_get_url(scene.audio_key, ttl)
+            audio_status = "ready"
+        elif scene.status == SceneStatus.TEXT_READY:
+            audio_status = "pending"
+    return SceneOut(
+        idx=scene.idx,
+        text=scene.text,
+        lines=[Line.model_validate(line) for line in scene.lines],
+        audio_url=audio_url,
+        audio_status=audio_status,
     )
 
 

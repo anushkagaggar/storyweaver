@@ -354,7 +354,7 @@ Setup, including the Claude Desktop config, is in [`mcp_server/README.md`](mcp_s
 | Local | Docker compose: Postgres + pgvector, Redis, SeaweedFS S3 |
 | Quality | ruff, mypy (strict), pytest, ESLint, pre-commit, detect-secrets, GitHub Actions |
 
-Later versions add Cloudflare R2 (or another free S3 store), Grafana Cloud, MLflow, DVC + DagsHub and
+V2 adds Backblaze B2 for narration audio ([ADR-0004](docs/decisions/ADR-0004-backblaze-b2-object-storage.md)). Later versions add Grafana Cloud, MLflow, DVC + DagsHub and
 Prefect. See [`plan.md`](plan.md).
 
 ---
