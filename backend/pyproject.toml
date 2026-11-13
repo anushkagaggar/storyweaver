@@ -17,6 +17,11 @@ dependencies = [
     "alembic>=1.16",
     "redis>=5.2",
     "langfuse>=4.15,<5",
+    # Speech-to-text (V2): PyAV decodes and resamples audio in memory (FFmpeg libraries in the wheel, no
+    # system ffmpeg); faster-whisper (MIT) is the local fallback / STT_ENGINE=local engine.
+    "av>=15",
+    "numpy>=2.0",
+    "faster-whisper>=1.2",
 ]
 
 [project.optional-dependencies]
@@ -70,5 +75,5 @@ strict = true
 packages = ["storyweaver"]
 
 [[tool.mypy.overrides]]
-module = ["spaces", "spaces.*", "torch", "torch.*"]
+module = ["spaces", "spaces.*", "torch", "torch.*", "faster_whisper", "faster_whisper.*"]
 ignore_missing_imports = true

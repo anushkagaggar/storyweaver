@@ -42,6 +42,13 @@ class Settings(BaseSettings):
     langfuse_secret_key: SecretStr | None = None
     langfuse_host: str = "https://cloud.langfuse.com"
     langfuse_capture_content: bool = False
+    # Speech-to-text (plan V2, §6.6). "groq": Groq Whisper while quota lasts, then faster-whisper on the
+    # Space's CPU. "local": faster-whisper only, so voice never leaves the Space.
+    stt_engine: Literal["groq", "local"] = "groq"
+    stt_model: str = "whisper-large-v3-turbo"
+    stt_local_model: str = "small"
+    stt_local_fallback: bool = True
+    stt_language: str = "en"
     # Run the in-process job worker (disabled in tests, which drive the worker directly).
     worker_enabled: bool = True
 

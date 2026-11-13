@@ -2,7 +2,7 @@
 # Smoke test for the running local stack (docker compose). Covers REST routes, the Gradio GPU endpoint and the
 # frontend. Run from the repo root in Git Bash:
 #   bash scripts/local_smoke.sh .env
-# Reads STORYWEAVER_API_KEY from the given .env without printing it. Spends one tiny Groq call.
+# Reads STORYWEAVER_API_KEY from the given .env without printing it. Spends one tiny Groq call and one Whisper call.
 set -u
 ENV_FILE=${1:-.env}
 [ -f "$ENV_FILE" ] || { echo "Env file not found: $ENV_FILE" >&2; exit 2; }
@@ -40,6 +40,17 @@ check "unknown route -> 404"            404 "$(code -H "X-API-Key: $KEY" $API/v1
 check "groq-check -> 200 (1 tiny call)" 200 "$(code -H "X-API-Key: $KEY" $API/v1/groq-check)"
 check "/docs available locally"         200 "$(code $API/docs)"
 check "REST gpu-check removed -> 404"   404 "$(code -H "X-API-Key: $KEY" $API/v1/gpu-check)"
+
+echo "--- Speech-to-text (V2)"
+STT=$API/v1/speech/transcribe
+FIXTURE=backend/tests/fixtures/speech_dragon.wav
+check "transcribe without key -> 401"   401 "$(code -X POST $STT -H 'Content-Type: audio/wav' --data-binary @$FIXTURE)"
+check "transcribe JSON body -> 415"     415 "$(code -X POST $STT -H "X-API-Key: $KEY" -H 'Content-Type: application/json' -d '{}')"
+silent=$(python -I -c "import io,sys,wave;b=io.BytesIO();w=wave.open(b,'wb');w.setnchannels(1);w.setsampwidth(2);w.setframerate(16000);w.writeframes(bytes(96000));w.close();sys.stdout.buffer.write(b.getvalue())" \
+  | curl -s -m 60 -X POST $STT -H "X-API-Key: $KEY" -H 'Content-Type: audio/wav' --data-binary @-)
+check "transcribe silence -> audio_silent" audio_silent "$(echo "$silent" | python -I -c 'import json,sys;print(json.load(sys.stdin).get("code"))' 2>/dev/null)"
+heard=$(curl -s -m 120 -X POST $STT -H "X-API-Key: $KEY" -H 'Content-Type: audio/wav' --data-binary @$FIXTURE)
+check "transcribe speech (1 Whisper call)" True "$(echo "$heard" | python -I -c 'import json,sys;print("dragon" in json.load(sys.stdin).get("text","").lower())' 2>/dev/null)"
 
 echo "--- Gradio GPU endpoint (ADR-0001)"
 # gradio_call <api name> [curl header args...] -> prints "<event>|<data>" of the final SSE event

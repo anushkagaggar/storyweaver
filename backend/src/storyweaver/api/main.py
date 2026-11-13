@@ -11,7 +11,7 @@ from storyweaver import __version__
 from storyweaver.api.errors import register_error_handlers
 from storyweaver.api.gpu_endpoints import register_gpu_endpoints
 from storyweaver.api.middleware import REQUEST_ID_HEADER, request_id_middleware
-from storyweaver.api.routers import diagnostics, health, stories
+from storyweaver.api.routers import diagnostics, health, speech, stories
 from storyweaver.config import get_settings
 from storyweaver.services import build_services
 
@@ -79,5 +79,6 @@ def create_app() -> gr.Server:
     app.include_router(health.router)
     app.include_router(diagnostics.router)
     app.include_router(stories.router)
+    app.include_router(speech.router)
     register_gpu_endpoints(app)
     return app
