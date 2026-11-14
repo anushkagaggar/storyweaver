@@ -1,5 +1,6 @@
 """BlobStore adapters. S3 presigning is computed locally, so these tests need no object store."""
 
+import logging
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -84,6 +85,56 @@ def test_blob_storage_needs_endpoint_and_both_keys(
     assert settings.blob_storage_enabled is enabled
     if not enabled:
         assert build_blob_store(settings) is None
+
+
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    [
+        # A B2 console shows the endpoint without a scheme; pasting it verbatim must still work.
+        ("s3.us-east-005.backblazeb2.com", "https://s3.us-east-005.backblazeb2.com"),
+        ("https://s3.us-east-005.backblazeb2.com", "https://s3.us-east-005.backblazeb2.com"),
+        ("https://s3.us-east-005.backblazeb2.com/", "https://s3.us-east-005.backblazeb2.com"),
+        ("  s3.us-east-005.backblazeb2.com  ", "https://s3.us-east-005.backblazeb2.com"),
+        ("http://s3:8333", "http://s3:8333"),  # local SeaweedFS keeps plain http
+    ],
+)
+def test_a_scheme_less_s3_endpoint_gets_https(
+    monkeypatch: pytest.MonkeyPatch, configured: str, expected: str
+) -> None:
+    monkeypatch.setenv("S3_ENDPOINT_URL", configured)
+    assert Settings().s3_endpoint_url == expected  # type: ignore[call-arg]
+
+
+def test_an_odd_scheme_is_left_alone_rather_than_invalidating_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rejecting it here would fail Settings() itself, which crashes start-up just as hard."""
+    monkeypatch.setenv("S3_ENDPOINT_URL", "ftp://s3.example.com")
+    assert Settings().s3_endpoint_url == "ftp://s3.example.com"  # type: ignore[call-arg]
+
+
+def test_a_broken_endpoint_disables_audio_instead_of_killing_the_app(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """v2.0.1: boto3 raised inside the lifespan and every route died over one feature's setting."""
+    for name, value in (
+        ("S3_ENDPOINT_URL", "https://s3.example.com"),
+        ("S3_ACCESS_KEY_ID", "key-id-should-not-be-logged"),
+        ("S3_SECRET_ACCESS_KEY", "secret-should-not-be-logged"),  # pragma: allowlist secret
+    ):
+        monkeypatch.setenv(name, value)
+    settings = Settings()  # type: ignore[call-arg]
+    monkeypatch.setattr(
+        "storyweaver.services.S3BlobStore",
+        lambda _config: (_ for _ in ()).throw(ValueError("Invalid endpoint: nonsense")),
+    )
+
+    with caplog.at_level(logging.ERROR):
+        assert build_blob_store(settings) is None
+
+    logged = "\n".join(record.getMessage() for record in caplog.records)
+    assert "misconfigured" in logged and "s3.example.com" in logged
+    assert "should-not-be-logged" not in logged  # the endpoint helps; the credentials never appear
 
 
 async def test_delete_prefix_removes_only_that_story() -> None:

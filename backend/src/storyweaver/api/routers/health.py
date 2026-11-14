@@ -7,6 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from storyweaver.api.deps import ServicesDep
+from storyweaver.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,12 @@ async def ready(services: ServicesDep) -> dict[str, object]:
     else:
         checks["redis"] = await _check("redis", services.redis.ping())
     checks["worker"] = "running" if services.worker is not None else "disabled"
+    # "misconfigured" means the settings are there but the client could not be built, so stories still work
+    # and narration has nowhere to go. Degraded, not down: reported here rather than failing readiness.
+    if services.blobs is not None:
+        checks["audio_storage"] = "ok"
+    else:
+        checks["audio_storage"] = "misconfigured" if get_settings().blob_storage_enabled else "not_configured"
 
     if "down" in checks.values():
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, f"Not ready: {checks}")

@@ -118,15 +118,50 @@ chosen once per story and a named voice is never silently swapped (plan §6.3).
 `Retry-After` is ~14 hours (correct for a daily window). The useful advice, "or choose another voice", is
 there, but a quota-exhausted message distinct from the rate-limited one would read better.
 
-## Released as `v2.0.1`
+## Release history, and two failures worth keeping
 
-`v2.0.0` was tagged first and its CI failed: an MCP test asserted that a directory is unreadable while the
-size cap was patched to 50 bytes, and a directory stats as 4096 bytes on Linux against 0 on Windows, so it
-passed locally and failed on `ubuntu-latest`. The deploy job is gated on CI, so nothing was uploaded and
-the Space stayed on `v1.0.2`. The fix shipped as `v2.0.1`; `v2.0.0` points at a commit that never deployed.
+### `v2.0.0` — never deployed (CI red)
 
-Lesson for the next release: the local gate runs on Windows, and CI runs on Linux. For anything that
-touches the filesystem, run the CI steps on Linux before tagging:
+An MCP test asserted that a directory is unreadable while the size cap was patched to 50 bytes. A directory
+stats as 4096 bytes on Linux against 0 on Windows, so the call hit the "too big" branch instead: green
+locally, red on `ubuntu-latest`. The deploy job is gated on CI, so nothing was uploaded.
+
+### `v2.0.1` — deployed and crashed the Space (14 Nov 2026, ~34 minutes)
+
+`S3_ENDPOINT_URL` was set to `s3.us-east-005.backblazeb2.com`, copied from the B2 console **without the
+scheme**. boto3 refuses a scheme-less endpoint while the *client is being constructed*:
+
+```
+ValueError: Invalid endpoint: s3.us-east-005.backblazeb2.com
+```
+
+That construction happens in `build_services()` inside the app's lifespan, so the whole app failed to
+start. The Space went to `RUNTIME_ERROR` and every route died — stories, health and the GPU endpoint — over
+one feature's setting. Recovered by re-running the deploy workflow on `v1.0.1`.
+
+Nothing in the gate could have caught it. CI never builds an S3 client with production values, and the
+local stack uses `http://s3:8333`, which has a scheme. **A config-shaped risk needs a config-shaped check**:
+before the next release that adds a setting, exercise it with the production value, for example
+
+```powershell
+docker compose -f infra/docker-compose.yml --env-file .env exec -T -e S3_ENDPOINT_URL='<the Space value>' `
+  api python -c "from storyweaver.config import Settings; from storyweaver.services import build_blob_store; build_blob_store(Settings())"
+```
+
+Three changes in `v2.0.2` so it cannot repeat:
+
+- a scheme-less endpoint is normalised to `https://…` (`config.py`), so the console value works as pasted;
+- `build_blob_store` catches a store it cannot build, logs the endpoint, region and bucket (never the
+  credentials) and returns `None`, so narration degrades instead of the app dying;
+- `/health/ready` gained an `audio_storage` check (`ok` / `not_configured` / `misconfigured`) that reports
+  the degraded state without failing readiness, so it is never silent.
+
+A bad endpoint is deliberately **not** rejected in the validator: raising there makes `Settings()` itself
+invalid, which fails at start-up just as hard as the crash it was meant to prevent.
+
+### Lesson from `v2.0.0`: the gate runs on Windows, CI runs on Linux
+
+For anything that touches the filesystem, run the CI steps on Linux before tagging:
 
 ```powershell
 docker run --rm -v "<a copy of mcp_server>:/w" -w /w ghcr.io/astral-sh/uv:python3.12-bookworm-slim `

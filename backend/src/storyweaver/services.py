@@ -153,20 +153,38 @@ def build_services(settings: Settings) -> Services:
 
 
 def build_blob_store(settings: Settings) -> BlobStore | None:
+    """The audio store, or None when it is not configured or cannot be built.
+
+    A misconfigured store must not take the whole app down: without it stories still plan and play back as
+    text, and narration degrades. v2.0.1 crashed on start because boto3 rejected a scheme-less endpoint
+    inside the lifespan, so every route died over one feature's setting.
+    """
     if not settings.blob_storage_enabled:
         return None
     assert settings.s3_endpoint_url and settings.s3_access_key_id and settings.s3_secret_access_key  # noqa: S101
-    return S3BlobStore(
-        S3Config(
-            endpoint_url=settings.s3_endpoint_url,
-            public_endpoint_url=settings.s3_public_endpoint_url,
-            region=settings.s3_region,
-            bucket=settings.s3_bucket,
-            access_key_id=settings.s3_access_key_id.get_secret_value(),
-            secret_access_key=settings.s3_secret_access_key.get_secret_value(),
-            create_bucket=settings.s3_create_bucket,
+    try:
+        return S3BlobStore(
+            S3Config(
+                endpoint_url=settings.s3_endpoint_url,
+                public_endpoint_url=settings.s3_public_endpoint_url,
+                region=settings.s3_region,
+                bucket=settings.s3_bucket,
+                access_key_id=settings.s3_access_key_id.get_secret_value(),
+                secret_access_key=settings.s3_secret_access_key.get_secret_value(),
+                create_bucket=settings.s3_create_bucket,
+            )
         )
-    )
+    except Exception:
+        # The endpoint or region is unusable. Log it loudly (never the credentials) and carry on without
+        # audio storage; /health/ready reports the store as unavailable.
+        logger.exception(
+            "Object storage is misconfigured (endpoint %r, region %r, bucket %r): narration audio is "
+            "disabled until it is fixed.",
+            settings.s3_endpoint_url,
+            settings.s3_region,
+            settings.s3_bucket,
+        )
+        return None
 
 
 def build_stt(settings: Settings, groq_client: AsyncGroq | None, router: ModelRouter) -> RoutedSTT | None:

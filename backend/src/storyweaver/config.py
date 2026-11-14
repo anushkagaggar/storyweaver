@@ -93,6 +93,24 @@ class Settings(BaseSettings):
     def _blank_key_is_unset(cls, value: object) -> object:
         return None if isinstance(value, str) and not value.strip() else value
 
+    @field_validator("s3_endpoint_url", "s3_public_endpoint_url", mode="after")
+    @classmethod
+    def _endpoint_needs_a_scheme(cls, value: str | None) -> str | None:
+        """Add `https://` when the scheme is missing.
+
+        A console shows a B2 endpoint as `s3.us-east-005.backblazeb2.com`, and pasting that verbatim used to
+        take the whole Space down: boto3 rejects a scheme-less endpoint with `ValueError: Invalid endpoint`
+        while the client is being built, which happens in the app's lifespan (v2.0.1, 14 Nov 2026).
+
+        Anything else is passed through untouched rather than rejected here: a bad endpoint must not make
+        the whole Settings object invalid, because that fails at start-up just as hard. `build_blob_store`
+        catches what boto3 refuses and disables audio instead.
+        """
+        if value is None:
+            return None
+        value = value.strip().rstrip("/")
+        return value if "://" in value else f"https://{value}"
+
     @property
     def allowed_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.allowed_origins.split(",") if origin.strip()]

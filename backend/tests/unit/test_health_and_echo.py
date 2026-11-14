@@ -8,7 +8,28 @@ def test_health_endpoints_need_no_api_key(client: TestClient) -> None:
     assert client.get("/health/live").json() == {"status": "ok"}
     ready = client.get("/health/ready").json()
     assert ready["status"] == "ready"
-    assert ready["checks"] == {"database": "not_configured", "redis": "not_configured", "worker": "disabled"}
+    assert ready["checks"] == {
+        "database": "not_configured",
+        "redis": "not_configured",
+        "worker": "disabled",
+        "audio_storage": "not_configured",
+    }
+
+
+def test_ready_reports_misconfigured_audio_storage_without_failing(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Configured but unbuildable (the v2.0.1 endpoint bug): degraded, not down."""
+    from storyweaver.config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(type(settings), "blob_storage_enabled", property(lambda _self: True))
+    client.app.state.services.blobs = None  # type: ignore[attr-defined]
+
+    response = client.get("/health/ready")
+
+    assert response.status_code == 200  # stories still work; only narration has nowhere to go
+    assert response.json()["checks"]["audio_storage"] == "misconfigured"
 
 
 @pytest.mark.parametrize("headers", [{}, {"X-API-Key": "wrong"}])
