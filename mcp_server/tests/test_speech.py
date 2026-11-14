@@ -96,22 +96,30 @@ async def test_transcribe_refuses_files_that_are_not_recordings(tmp_path: Path) 
         assert not route.called
 
 
-async def test_transcribe_missing_unreadable_and_oversized_files(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_transcribe_rejects_a_missing_or_unreadable_file(tmp_path: Path) -> None:
+    # No size cap is patched here on purpose: a directory reports 4096 bytes on Linux and 0 on Windows,
+    # so a small cap would make this hit the "too big" branch on one platform only.
     (tmp_path / "folder.wav").mkdir()
+    async with connect() as session:
+        with respx.mock(assert_all_called=False) as router:
+            route = router.post(f"{API}/v1/speech/transcribe")
+            missing = await session.call_tool("transcribe", {"audio_path": str(tmp_path / "nope.wav")})
+            folder = await session.call_tool("transcribe", {"audio_path": str(tmp_path / "folder.wav")})
+
+        assert missing.isError and "No recording found" in text_of(missing)
+        assert folder.isError and "can't be read" in text_of(folder)
+        assert not route.called
+
+
+async def test_transcribe_rejects_an_oversized_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     big = tmp_path / "big.wav"
     big.write_bytes(b"x" * 100)
     monkeypatch.setattr("client.MAX_AUDIO_BYTES", 50)
     async with connect() as session:
         with respx.mock(assert_all_called=False) as router:
             route = router.post(f"{API}/v1/speech/transcribe")
-            missing = await session.call_tool("transcribe", {"audio_path": str(tmp_path / "nope.wav")})
-            folder = await session.call_tool("transcribe", {"audio_path": str(tmp_path / "folder.wav")})
             oversized = await session.call_tool("transcribe", {"audio_path": str(big)})
 
-        assert missing.isError and "No recording found" in text_of(missing)
-        assert folder.isError and "can't be read" in text_of(folder)
         assert oversized.isError and "under 10 MB" in text_of(oversized)
         assert not route.called
 
