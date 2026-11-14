@@ -62,7 +62,7 @@ Saving a secret restarts the Space. Until the `v2.*` tag is deployed it runs V1 
 1. **Local gate** (plan §11): `uv run pytest -m unit` in `backend/`, `uv run pytest` in `mcp_server/`,
    frontend lint/typecheck/test/build, then the Docker stack and `bash scripts/local_smoke.sh .env`
    (48/48). Plus the two exit criteria below.
-2. **Backend:** tag the tested `dev-v2` commit `v2.0.0` and push the tag. CI runs, then the deploy workflow
+2. **Backend:** tag the tested `dev-v2` commit and push the tag. CI runs, then the deploy workflow
    uploads `backend/` to the Space. On start the Space runs `alembic upgrade head` against Neon, which is a
    no-op here: **V2 adds no migration.** The head is still `0002` (V1.1), because narration reuses columns
    `0001` already created (`scenes.audio_key`, `characters.voice_id`, `stories.tts_engine`).
@@ -117,6 +117,23 @@ chosen once per story and a named voice is never silently swapped (plan §6.3).
 **Follow-up:** step 4's message reads "That voice is busy right now. Please try again shortly" while
 `Retry-After` is ~14 hours (correct for a daily window). The useful advice, "or choose another voice", is
 there, but a quota-exhausted message distinct from the rate-limited one would read better.
+
+## Released as `v2.0.1`
+
+`v2.0.0` was tagged first and its CI failed: an MCP test asserted that a directory is unreadable while the
+size cap was patched to 50 bytes, and a directory stats as 4096 bytes on Linux against 0 on Windows, so it
+passed locally and failed on `ubuntu-latest`. The deploy job is gated on CI, so nothing was uploaded and
+the Space stayed on `v1.0.2`. The fix shipped as `v2.0.1`; `v2.0.0` points at a commit that never deployed.
+
+Lesson for the next release: the local gate runs on Windows, and CI runs on Linux. For anything that
+touches the filesystem, run the CI steps on Linux before tagging:
+
+```powershell
+docker run --rm -v "<a copy of mcp_server>:/w" -w /w ghcr.io/astral-sh/uv:python3.12-bookworm-slim `
+  sh -c "uv sync --frozen -q && uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest -q"
+```
+
+Copy the folder first: mounting `mcp_server/` directly would let the container overwrite the Windows `.venv`.
 
 ## Rollback
 
