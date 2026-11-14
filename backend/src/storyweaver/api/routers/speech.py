@@ -30,7 +30,7 @@ from storyweaver.speech.audio_utils import (
 )
 from storyweaver.speech.stt import STTError, STTUnavailableError
 from storyweaver.speech.tts import TTSError, TTSRateLimitedError, TTSUnavailableError
-from storyweaver.speech.voices import CATALOGUE
+from storyweaver.speech.voices import CATALOGUE, NARRATOR_VOICE
 
 logger = logging.getLogger(__name__)
 
@@ -165,6 +165,38 @@ async def transcribe(request: Request, services: ServicesDep) -> Any:
         engine=transcript.engine,
         model=transcript.model,
         duration_seconds=round(audio.duration_seconds, 2),
+    )
+
+
+class VoiceOut(BaseModel):
+    id: str
+    label: str
+    accent: str
+
+
+class EngineVoicesOut(BaseModel):
+    narrator: str = Field(description="The voice this engine uses for the narrator.")
+    voices: list[VoiceOut]
+
+
+class VoicesOut(BaseModel):
+    engines: dict[str, EngineVoicesOut]
+
+
+@router.get("/voices", response_model=VoicesOut)
+async def list_voices() -> VoicesOut:
+    """Every voice `/narrate` accepts, per engine (the one catalogue; clients never keep their own copy).
+
+    Without a voice, `/narrate` uses the narrator of whichever engine has quota (Orpheus first, then Kokoro).
+    """
+    return VoicesOut(
+        engines={
+            engine: EngineVoicesOut(
+                narrator=NARRATOR_VOICE[engine],
+                voices=[VoiceOut(id=v.id, label=v.label, accent=v.accent) for v in voices],
+            )
+            for engine, voices in CATALOGUE.items()
+        }
     )
 
 

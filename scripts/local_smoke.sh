@@ -57,6 +57,8 @@ echo "--- Text-to-speech (V2; Kokoro only, so the tiny Orpheus quota is never sp
 NAR=$API/v1/speech/narrate
 check "narrate without key -> 401"      401 "$(code -X POST $NAR -H 'Content-Type: application/json' -d '{"text":"Hi."}')"
 check "narrate unknown voice -> 422"    422 "$(code -X POST $NAR -H "X-API-Key: $KEY" -H 'Content-Type: application/json' -d '{"text":"Hi.","voice":"nobody"}')"
+check "voices without key -> 401"       401 "$(code $API/v1/speech/voices)"
+check "voices lists both engines"       True "$(curl -s -m 30 $API/v1/speech/voices -H "X-API-Key: $KEY" | python -I -c 'import json,sys;print(sorted(json.load(sys.stdin)["engines"])==["kokoro","orpheus"])' 2>/dev/null)"
 # The first Kokoro call downloads its model (~350 MB) into the mounted cache, so allow a few minutes.
 nar=$(curl -s -m 600 -o /dev/null -w '%{http_code}|%{content_type}' -D - -X POST $NAR -H "X-API-Key: $KEY" -H 'Content-Type: application/json' -d '{"text":"Goodnight, little dragon.","voice":"af_heart"}' | tr -d '\r' | awk -F': ' 'tolower($1)=="x-tts-engine"{e=$2} END{print e}')
 check "narrate with Kokoro -> mp3"      kokoro "$nar"

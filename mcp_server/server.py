@@ -1,26 +1,47 @@
-"""StoryWeaver MCP server (plan §6.7, V1): tools, a resource and a prompt over the REST API.
+"""StoryWeaver MCP server (plan §6.7, V1-V2): tools, resources and a prompt over the REST API.
 
 Transport: stdio for Claude Desktop and the MCP Inspector (V1-V8); Streamable HTTP on the Space comes in V9.
 Run:  uv run server.py      Inspect:  uv run mcp dev server.py
 """
 
+import asyncio
 import json
-from collections.abc import AsyncIterator
+import os
+import tempfile
+import uuid
+from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from pydantic import Field
 
-from client import ApiConfig, ApiError, StoryWeaverClient
+from client import ApiConfig, ApiError, StoryWeaverClient, read_audio_file
 
 
 @dataclass
 class AppContext:
     api: StoryWeaverClient
+
+
+MAX_NARRATE_CHARS = 600  # the API's limit (enforced there too); here it gives a clear error before the call
+
+
+def default_audio_dir() -> Path:
+    """Where `narrate` saves MP3s: STORYWEAVER_AUDIO_DIR, else a folder under the system temp directory."""
+    configured = os.environ.get("STORYWEAVER_AUDIO_DIR", "").strip()
+    return Path(configured).expanduser() if configured else Path(tempfile.gettempdir()) / "storyweaver-audio"
+
+
+def save_mp3(directory: Path, mp3: bytes) -> Path:
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"narration-{uuid.uuid4().hex[:12]}.mp3"
+    path.write_bytes(mp3)
+    return path
 
 
 POLL_SECONDS = 15
@@ -76,8 +97,8 @@ def with_job_progress(job: dict[str, Any]) -> dict[str, Any]:
     return {**job, "progress": note, "check_again_in_seconds": max(5, min(60, (wait or 0) + 5))}
 
 
-def make_server(client_factory: Any = None) -> FastMCP:
-    """Build the server. `client_factory` (tests) returns a StoryWeaverClient; default reads env vars."""
+def make_server(client_factory: Any = None, audio_dir: Path | None = None) -> FastMCP:
+    """Build the server. `client_factory` and `audio_dir` (tests) override the env-var defaults."""
 
     @asynccontextmanager
     async def lifespan(_: FastMCP) -> AsyncIterator[AppContext]:
@@ -94,7 +115,10 @@ def make_server(client_factory: Any = None) -> FastMCP:
             "Call create_story with the parent's idea, then call get_story every check_again_in_seconds "
             "until its status is 'ready' or 'failed'. Stories usually take 1-3 minutes on the free tier: "
             "queued, planning and checking are normal progress, so keep checking and don't give up early. "
-            "Then read the story page by page and end with its moral."
+            "Then read the story page by page and end with its moral. "
+            "To turn a recording of the parent's voice into a story idea, call transcribe with the audio "
+            "file's path, then pass the text to create_story. To hear any text read aloud, call narrate "
+            "(the voices://list resource lists the voices)."
         ),
         lifespan=lifespan,
     )
@@ -102,13 +126,12 @@ def make_server(client_factory: Any = None) -> FastMCP:
     def api_of(ctx: Context[Any, AppContext, Any]) -> StoryWeaverClient:
         return ctx.request_context.lifespan_context.api
 
-    async def call(coro: Any) -> dict[str, Any]:
+    async def call[T](coro: Awaitable[T]) -> T:
         try:
-            result: dict[str, Any] = await coro
+            return await coro
         except ApiError as exc:
             wait = f" Try again in {exc.retry_after_seconds} seconds." if exc.retry_after_seconds else ""
             raise ToolError(f"{exc.message}{wait}") from exc
-        return result
 
     @mcp.tool()
     async def create_story(
@@ -133,6 +156,55 @@ def make_server(client_factory: Any = None) -> FastMCP:
         """Get a story job's status (queued, running, succeeded, failed) with a progress note. A queued job
         with a later run_after is waiting for free-tier quota, which is normal."""
         return with_job_progress(await call(api_of(ctx).get_job(job_id)))
+
+    @mcp.tool()
+    async def transcribe(
+        ctx: Context[Any, AppContext, Any],
+        audio_path: Annotated[
+            str,
+            Field(
+                description="Path to a voice recording on this computer (webm, ogg, mp4/m4a, mp3, wav, flac)."
+            ),
+        ],
+    ) -> dict[str, Any]:
+        """Turn a short voice recording (up to 60 seconds and 10 MB) into text, for example a spoken story
+        idea. Returns {text, engine, model, duration_seconds}; pass the text to create_story. The recording
+        is sent for transcription only; it is not kept."""
+        audio, content_type = await call(read_audio_file(audio_path))
+        return await call(api_of(ctx).transcribe(audio, content_type))
+
+    @mcp.tool()
+    async def narrate(
+        ctx: Context[Any, AppContext, Any],
+        text: Annotated[
+            str, Field(min_length=1, max_length=MAX_NARRATE_CHARS, description="What to read aloud.")
+        ],
+        voice: Annotated[
+            str | None, Field(description="A voice id from voices://list; omit for the default narrator.")
+        ] = None,
+    ) -> dict[str, Any]:
+        """Read text aloud (up to 600 characters) as an MP3. The file is saved on this computer; open
+        audio_path (or audio_url) to listen. Returns {audio_url, audio_path, engine, voice,
+        duration_seconds}. For a whole story, use the audio on each page from get_story instead."""
+        narrated = await call(api_of(ctx).narrate(text, voice))
+        path = await asyncio.to_thread(save_mp3, audio_dir or default_audio_dir(), narrated.mp3)
+        return {
+            "audio_url": path.as_uri(),
+            "audio_path": str(path),
+            "engine": narrated.engine,
+            "voice": narrated.voice,
+            "duration_seconds": narrated.duration_seconds,
+        }
+
+    @mcp.resource("voices://list", mime_type="application/json")
+    async def voices_resource() -> str:
+        """The voices narrate accepts, for both engines (Orpheus and Kokoro), with each engine's narrator."""
+        ctx = mcp.get_context()
+        try:
+            voices = await api_of(ctx).list_voices()
+        except ApiError as exc:
+            raise ValueError(exc.message) from exc
+        return json.dumps(voices, ensure_ascii=False)
 
     @mcp.resource("story://{story_id}", mime_type="application/json")
     async def story_resource(story_id: str) -> str:

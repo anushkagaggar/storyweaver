@@ -4,22 +4,15 @@ The REST API is mocked with respx: success, bad input and API errors per tool.
 """
 
 import json
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
 import pytest
 import respx
-from mcp.client.session import ClientSession
-from mcp.shared.memory import create_connected_server_and_client_session
+from helpers import API, connect, text_of
 from mcp.types import TextContent, TextResourceContents
 
-from client import ApiConfig, StoryWeaverClient
-from server import make_server
-
-API = "http://api.test"
 STORY_ID = "7fd3029c-610e-47c2-adfc-db3f55e3ce75"
 JOB_ID = "7f7a597f-11f9-40c8-92b9-f7fa96527fec"
 STORY = {
@@ -33,27 +26,19 @@ STORY = {
 }
 
 
-@asynccontextmanager
-async def connect() -> AsyncIterator[ClientSession]:
-    """Open the session in the test's own task: anyio task groups must exit where they began."""
-    server = make_server(lambda: StoryWeaverClient(ApiConfig(API, "test-key")))
-    async with create_connected_server_and_client_session(server) as client_session:
-        yield client_session
+_text = text_of
 
 
-def _text(result: Any) -> str:
-    block = result.content[0]
-    assert isinstance(block, TextContent)
-    return block.text
-
-
-async def test_lists_v1_tools_resource_and_prompt() -> None:
+async def test_lists_tools_resources_and_prompt() -> None:
+    """V1 tools/resource/prompt plus the V2 additions (their behaviour is tested in test_speech.py)."""
     async with connect() as session:
         tools = {tool.name for tool in (await session.list_tools()).tools}
+        resources = [str(r.uri) for r in (await session.list_resources()).resources]
         templates = [t.uriTemplate for t in (await session.list_resource_templates()).resourceTemplates]
         prompts = [p.name for p in (await session.list_prompts()).prompts]
 
-        assert tools == {"create_story", "get_story", "get_job_status"}
+        assert tools == {"create_story", "get_story", "get_job_status", "transcribe", "narrate"}
+        assert resources == ["voices://list"]
         assert templates == ["story://{story_id}"]
         assert prompts == ["bedtime_story"]
 
