@@ -51,9 +51,11 @@ Space → Settings → **Variables and secrets**. Variables are public, so crede
 | `S3_BUCKET` | **Variable** (new) | the bucket name |
 | everything from V1 | unchanged | `DATABASE_URL`, `REDIS_URL`, `STORYWEAVER_API_KEY`, `GROQ_API_KEY`, `APP_ENV`, `ALLOWED_ORIGINS` |
 
-`TTS_ENGINE` is deliberately **not** set on the Space, so it stays `auto`: Orpheus while its daily quota
-lasts, then Kokoro. (The local Docker stack defaults it to `kokoro` instead, because local and production
-share one Groq organisation and Orpheus's free tier is about one story a day.)
+`TTS_ENGINE` was initially left unset on the Space, so it stayed `auto`: Orpheus while its daily quota
+lasts, then Kokoro. **Since 15 Nov 2026 it is set to `kokoro`** (Variable), because `auto` made narration
+take many minutes per story — see the pacing follow-up below. Removing the Variable restores the nicer
+Orpheus voice at that cost. The local Docker stack defaults it to `kokoro` too, because local and
+production share one Groq organisation and Orpheus's free tier is about one story a day.
 
 Saving a secret restarts the Space. Until the `v2.*` tag is deployed it runs V1 and ignores them.
 
@@ -114,9 +116,25 @@ Step 4 is the half that is easy to miss: when a request *names* an Orpheus voice
 of quietly substituting a Kokoro one. Mid-story that would change a character's voice, so the engine is
 chosen once per story and a named voice is never silently swapped (plan §6.3).
 
-**Follow-up:** step 4's message reads "That voice is busy right now. Please try again shortly" while
-`Retry-After` is ~14 hours (correct for a daily window). The useful advice, "or choose another voice", is
-there, but a quota-exhausted message distinct from the rate-limited one would read better.
+## Open follow-ups from V2
+
+**1. On `auto`, a story takes many minutes to narrate.** Orpheus allows 9 requests a minute (10 before the
+margin), and a scene is split into ≤ 200-character chunks, so a 5-scene story is 10–20 requests that
+`_pace()` in `routing/tts.py` spaces out. Observed live on 14 Nov 2026: repeated
+`Pacing Orpheus: waiting 6 s for the per-minute limit` and no finished scene after five minutes.
+
+Nothing is broken here — when the accumulated wait would pass `TTS_MAX_WAIT_SECONDS` (120 s), `_speak()`
+raises `DeferJobError`, so the scene is **deferred and retried later rather than failed**, and a deferral
+does not use up an attempt. It is a latency problem, not a correctness one. Worth considering: scale the
+wait budget with the number of chunks a scene needs instead of one flat number for scenes of any length.
+Until then `TTS_ENGINE=kokoro` on the Space sidesteps pacing entirely.
+
+(The scene failures seen that day were **not** pacing: they were the B2 credentials, below.)
+
+**2. `tts_busy` wording.** A quota-exhausted narration reads "That voice is busy right now. Please try
+again shortly" while `Retry-After` is ~14 hours (correct for a daily window). The useful advice, "or choose
+another voice", is there, but a quota-exhausted message distinct from the rate-limited one would read
+better.
 
 ## Release history, and two failures worth keeping
 
