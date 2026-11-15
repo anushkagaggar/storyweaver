@@ -57,42 +57,58 @@ FailureHook = Callable[[JobContext, str, str], Awaitable[None]]
 
 
 class Worker:
+    """Runs jobs in lanes: one claim loop per lane, each with its own capacity.
+
+    A lane only claims its own job kinds, so a narration job sleeping through Orpheus's per-minute pacing
+    never holds up planning or illustration. The loops share one event loop, which keeps them independent
+    only while handlers never block it: CPU work (Kokoro, Whisper, MP3 encoding) runs in threads, and GPU
+    work is an HTTP call to the Gradio endpoint. By default every kind gets its own lane.
+    """
+
     def __init__(
         self,
         session_factory: async_sessionmaker[AsyncSession],
         handlers: dict[JobKind, Handler],
         *,
+        lanes: dict[str, frozenset[JobKind]] | None = None,
         on_final_failure: FailureHook | None = None,
         poll_interval: float = 1.0,
         stale_after_seconds: int = 600,
     ) -> None:
         self._sessions = session_factory
         self._handlers = handlers
+        self.lanes = lanes or {kind.value: frozenset({kind}) for kind in handlers}
+        unhandled = set().union(*self.lanes.values()) - set(handlers)
+        if unhandled:
+            raise ValueError(f"Lanes name job kinds without a handler: {sorted(unhandled)}")
         self._on_final_failure = on_final_failure
         self._poll_interval = poll_interval
         self._stale_after = stale_after_seconds
 
     async def run_forever(self, stop: asyncio.Event) -> None:
-        logger.info("Job worker started.")
+        logger.info("Job worker started with lanes %s.", sorted(self.lanes))
         async with self._sessions() as session, session.begin():
             requeued = await JobQueue(session).requeue_stale(self._stale_after)
             if requeued:
                 logger.warning("Requeued %d stale running job(s).", requeued)
+        await asyncio.gather(*(self._run_lane(name, kinds, stop) for name, kinds in self.lanes.items()))
+        logger.info("Job worker stopped.")
+
+    async def _run_lane(self, name: str, kinds: frozenset[JobKind], stop: asyncio.Event) -> None:
         while not stop.is_set():
             try:
-                processed = await self.run_once()
+                processed = await self.run_once(kinds)
             except Exception:
-                logger.exception("Job worker loop error; continuing.")
+                logger.exception("Job worker lane %s loop error; continuing.", name)
                 processed = False
             if not processed:
                 with suppress(TimeoutError):
                     await asyncio.wait_for(stop.wait(), timeout=self._poll_interval)
-        logger.info("Job worker stopped.")
 
-    async def run_once(self) -> bool:
-        """Claim and process one due job. Returns False when there was nothing to do."""
+    async def run_once(self, kinds: frozenset[JobKind] | None = None) -> bool:
+        """Claim and process one due job of `kinds` (default: any handled kind). False when there was none."""
         async with self._sessions() as session, session.begin():
-            job = await JobQueue(session).claim_next()
+            job = await JobQueue(session).claim_next(kinds if kinds is not None else self._handlers.keys())
             if job is None:
                 return False
             context = JobContext(

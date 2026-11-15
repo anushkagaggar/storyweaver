@@ -4,7 +4,7 @@ V1 order: input safety check -> insert story -> enqueue `plan` -> 202. Rejected 
 The worker plans the story, saves it as CHECKING (hidden from readers), runs the output safety check and then
 marks it READY. A retry after a deferred check re-checks the saved plan instead of planning again.
 V2: marking it READY also picks the TTS engine and voices and enqueues one `tts` job per scene, scene 1 first
-(orchestrator/narration_jobs.py). Image jobs follow in V3.
+(orchestrator/narration_jobs.py). V3: and one `image` job per scene (orchestrator/illustration_jobs.py).
 """
 
 import hashlib
@@ -28,6 +28,7 @@ from storyweaver.jobs.worker import (
 from storyweaver.llm.client import LLMError, LLMRateLimitedError
 from storyweaver.llm.planner import PlanningError, StoryPlanner, StoryRequest
 from storyweaver.observability.tracing import trace_scope
+from storyweaver.orchestrator.illustration_jobs import mark_scene_image_failed
 from storyweaver.orchestrator.narration_jobs import StoryNarration, mark_scene_audio_failed
 from storyweaver.routing.router import QuotaExhaustedError
 from storyweaver.safety.guards import (
@@ -160,11 +161,14 @@ class PlanStoryJob:
         planner: StoryPlanner,
         output_guard: OutputGuard,
         narration: StoryNarration | None = None,
+        *,
+        illustrate: bool = False,
     ) -> None:
         self._sessions = sessions
         self._planner = planner
         self._output_guard = output_guard
-        self._narration = narration  # None: stories have text only (no object storage configured)
+        self._narration = narration  # None: stories have no audio (no object storage configured)
+        self._illustrate = illustrate  # queue an image job per scene (needs object storage)
 
     async def __call__(self, context: JobContext) -> None:
         if context.story_id is None:
@@ -216,7 +220,7 @@ class PlanStoryJob:
         logger.info("Story %s is ready.", story_id)
 
     async def _publish(self, story_id: uuid.UUID, planned: Story) -> None:
-        """Mark the story READY and, in the same transaction, queue its narration (scene 1 first)."""
+        """Mark the story READY and, in the same transaction, queue its audio and pictures (scene 1 first)."""
         narration = await self._narration.prepare(story_id, planned) if self._narration else None
         async with self._sessions() as session, session.begin():
             repo = StoryRepository(session)
@@ -226,7 +230,10 @@ class PlanStoryJob:
             await repo.set_status(row, StoryStatus.READY)
             if narration is not None:
                 await repo.set_narration(row, narration.engine, narration.voices)
-                await _enqueue_narration(JobQueue(session), row)
+                await _enqueue_scenes(JobQueue(session), row, JobKind.TTS)
+            if self._illustrate:
+                await repo.mark_images_pending(row)
+                await _enqueue_scenes(JobQueue(session), row, JobKind.IMAGE)
 
     async def _plan(self, story_id: uuid.UUID, context: JobContext, request: StoryRequest) -> Story:
         try:
@@ -255,15 +262,17 @@ class PlanStoryJob:
 
 
 def make_story_failure_hook(sessions: async_sessionmaker[AsyncSession]) -> FailureHook:
-    """Once a job has failed for good: a plan job fails its story; a tts job only loses that page's audio."""
+    """Once a job has failed for good: a plan job fails its story; a tts or image job only loses that page's
+    audio or picture."""
 
     async def on_final_failure(context: JobContext, code: str, detail: str) -> None:
         if context.story_id is None:
             return
-        if context.kind == JobKind.TTS:
+        if context.kind in (JobKind.TTS, JobKind.IMAGE):
             idx = context.payload.get("idx")
             if isinstance(idx, int):
-                await mark_scene_audio_failed(sessions, context.story_id, idx)
+                mark = mark_scene_audio_failed if context.kind == JobKind.TTS else mark_scene_image_failed
+                await mark(sessions, context.story_id, idx)
             return
         async with sessions() as session, session.begin():
             repo = StoryRepository(session)
@@ -274,8 +283,8 @@ def make_story_failure_hook(sessions: async_sessionmaker[AsyncSession]) -> Failu
     return on_final_failure
 
 
-async def _enqueue_narration(queue: JobQueue, row: StoryRow) -> None:
+async def _enqueue_scenes(queue: JobQueue, row: StoryRow, kind: JobKind) -> None:
     for scene in row.scenes:
         await queue.enqueue(
-            JobKind.TTS, {"story_id": str(row.id), "idx": scene.idx}, story_id=row.id, order=scene.idx
+            kind, {"story_id": str(row.id), "idx": scene.idx}, story_id=row.id, order=scene.idx
         )

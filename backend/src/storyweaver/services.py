@@ -18,6 +18,7 @@ from storyweaver.config import Settings
 from storyweaver.jobs.worker import Handler, Worker
 from storyweaver.llm.planner import StoryPlanner
 from storyweaver.observability.tracing import NoopTracer, Tracer
+from storyweaver.orchestrator.illustration_jobs import IllustrateSceneJob, ImageSettings
 from storyweaver.orchestrator.narration import Narrator
 from storyweaver.orchestrator.narration_jobs import NarrateSceneJob, StoryNarration
 from storyweaver.orchestrator.story_deletion import RetentionSweeper, StoryDeletion
@@ -140,16 +141,38 @@ def build_services(settings: Settings) -> Services:
         logger.warning("Object storage is not configured (S3_*): stories will have no narration.")
     elif services.narrator is not None:
         narration = StoryNarration(services.narrator)
+    illustrate = settings.image_engine != "none" and services.blobs is not None
+    if settings.image_engine != "none" and services.blobs is None:
+        logger.warning("Object storage is not configured (S3_*): stories will have no pictures.")
     if settings.worker_enabled:
         handlers: dict[JobKind, Handler] = {
-            JobKind.PLAN: PlanStoryJob(services.sessions, planner, OutputGuard(policy), narration)
+            JobKind.PLAN: PlanStoryJob(
+                services.sessions, planner, OutputGuard(policy), narration, illustrate=illustrate
+            )
         }
         if narration is not None and services.blobs is not None:
             handlers[JobKind.TTS] = NarrateSceneJob(services.sessions, narration.narrator, services.blobs)
+        if illustrate and services.blobs is not None:
+            # IMAGE_ENGINE=placeholder: no illustrator, every page gets the placeholder (GPU in V3 step 3-4).
+            handlers[JobKind.IMAGE] = IllustrateSceneJob(
+                services.sessions, services.blobs, image_settings(settings), illustrator=None
+            )
         services.worker = Worker(
             services.sessions, handlers, on_final_failure=make_story_failure_hook(services.sessions)
         )
     return services
+
+
+def image_settings(settings: Settings) -> ImageSettings:
+    return ImageSettings(
+        model=settings.image_model,
+        model_revision=settings.image_model_revision,
+        width=settings.image_width,
+        height=settings.image_height,
+        sampler=settings.image_sampler,
+        steps=settings.image_steps,
+        guidance=settings.image_guidance,
+    )
 
 
 def build_blob_store(settings: Settings) -> BlobStore | None:

@@ -53,9 +53,19 @@ class SceneStatus(StrEnum):
     AUDIO_FAILED = "audio_failed"  # narration gave up; the page still reads fine without it
 
 
+class ImageStatus(StrEnum):
+    """scenes.image_status (V3). NULL: the story has no illustrations (made before V3, or images off)."""
+
+    PENDING = "pending"
+    READY = "ready"
+    PLACEHOLDER = "placeholder"  # no GPU image could be made; a soft wordless picture stands in
+    FAILED = "failed"  # not even the placeholder could be stored; the page reads fine without it
+
+
 class JobKind(StrEnum):
     PLAN = "plan"
     TTS = "tts"  # narrate one scene: payload {"story_id", "idx"}
+    IMAGE = "image"  # illustrate one scene: payload {"story_id", "idx"}
 
 
 class JobStatus(StrEnum):
@@ -142,7 +152,8 @@ class SceneRow(Base):
     lines: Mapped[list[dict[str, Any]]] = mapped_column(JSONB)
     image_key: Mapped[str | None] = mapped_column(String(256))
     audio_key: Mapped[str | None] = mapped_column(String(256))
-    status: Mapped[str] = mapped_column(String(16), default=SceneStatus.TEXT_READY)
+    status: Mapped[str] = mapped_column(String(16), default=SceneStatus.TEXT_READY)  # the audio state
+    image_status: Mapped[str | None] = mapped_column(String(16))  # ImageStatus; V3 (migration 0003)
 
     story: Mapped[StoryRow] = relationship(back_populates="scenes")
 

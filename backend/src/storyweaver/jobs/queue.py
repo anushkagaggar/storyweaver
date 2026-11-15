@@ -6,6 +6,7 @@ All times use the database clock (now()), so several workers agree on what is du
 import hashlib
 import json
 import uuid
+from collections.abc import Collection
 from datetime import timedelta
 from typing import Any
 
@@ -74,11 +75,14 @@ class JobQueue:
         )
         return result.scalar_one_or_none()
 
-    async def claim_next(self) -> JobRow | None:
-        """Atomically take the oldest due job, mark it running and count the attempt."""
+    async def claim_next(self, kinds: Collection[JobKind] | None = None) -> JobRow | None:
+        """Atomically take the oldest due job (of `kinds`, if given), mark it running, count the attempt."""
+        conditions = [JobRow.status == JobStatus.QUEUED, JobRow.run_after <= func.now()]
+        if kinds is not None:
+            conditions.append(JobRow.kind.in_([kind.value for kind in kinds]))
         due = (
             select(JobRow.id)
-            .where(JobRow.status == JobStatus.QUEUED, JobRow.run_after <= func.now())
+            .where(*conditions)
             .order_by(JobRow.run_after)
             .limit(1)
             .with_for_update(skip_locked=True)

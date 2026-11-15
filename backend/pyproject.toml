@@ -28,6 +28,8 @@ dependencies = [
     "kokoro-onnx>=0.6",
     # Object storage (V2): boto3 (Apache-2.0) speaks S3 to SeaweedFS locally and Backblaze B2 in production.
     "boto3>=1.36",
+    # Images (V3): Pillow (MIT-CMU) draws the placeholder and encodes PNGs. Gradio already depends on it.
+    "pillow>=11",
 ]
 
 [project.optional-dependencies]

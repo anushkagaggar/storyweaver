@@ -1,4 +1,4 @@
-"""Object storage for generated media (plan V2: narration MP3s; V3: images).
+"""Object storage for generated media (plan V2: narration MP3s; V3: images, in the same bucket).
 
 One `S3BlobStore` serves every environment: SeaweedFS in the local Docker stack and Backblaze B2 in
 production (ADR-0004), both through the S3 API. Buckets are private; readers get short-lived presigned GET
@@ -37,6 +37,10 @@ def s3_error(exc: Exception) -> str:
 
 class BlobStore(Protocol):
     async def put(self, key: str, data: bytes, content_type: str) -> None: ...
+
+    async def exists(self, key: str) -> bool:
+        """Whether `key` is stored. Lets a retried job reuse work a crashed attempt already uploaded."""
+        ...
 
     def presigned_get_url(self, key: str, expires_seconds: int) -> str:
         """A URL anyone can GET until it expires. Computed locally: no network call."""
@@ -107,6 +111,19 @@ class S3BlobStore:
             )
         except Exception as exc:
             raise BlobError(f"Upload of {key} failed: {s3_error(exc)}") from exc
+
+    async def exists(self, key: str) -> bool:
+        from botocore.exceptions import ClientError
+
+        try:
+            await asyncio.to_thread(self._client.head_object, Bucket=self._config.bucket, Key=key)
+        except ClientError as exc:
+            if exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode") == 404:
+                return False
+            raise BlobError(f"Lookup of {key} failed: {s3_error(exc)}") from exc
+        except Exception as exc:
+            raise BlobError(f"Lookup of {key} failed: {s3_error(exc)}") from exc
+        return True
 
     def presigned_get_url(self, key: str, expires_seconds: int) -> str:
         url: str = self._signer.generate_presigned_url(
@@ -182,6 +199,9 @@ class InMemoryBlobStore:
     async def put(self, key: str, data: bytes, content_type: str) -> None:
         self.objects[key] = (data, content_type)
 
+    async def exists(self, key: str) -> bool:
+        return key in self.objects
+
     def presigned_get_url(self, key: str, expires_seconds: int) -> str:
         return f"{self._base_url}/{key}?expires={expires_seconds}"
 
@@ -204,3 +224,17 @@ def story_prefix(story_id: object) -> str:
 
 def scene_audio_key(story_id: object, idx: int) -> str:
     return f"{story_prefix(story_id)}audio/scene-{idx}.mp3"
+
+
+def image_key(story_id: object, digest: str) -> str:
+    """A generated image, content-addressed by its generation settings (imaging.params.cache_key).
+
+    Scoped to the story, not shared across stories: character seeds differ per story, so cross-story hits
+    would be vanishingly rare, while a per-story prefix keeps deletion and the 30-day expiry complete.
+    """
+    return f"{story_prefix(story_id)}images/{digest}.png"
+
+
+def placeholder_image_key(story_id: object, idx: int) -> str:
+    """Never under a content key: a scene that fell back once must still get its real image later."""
+    return f"{story_prefix(story_id)}images/placeholder-{idx}.png"

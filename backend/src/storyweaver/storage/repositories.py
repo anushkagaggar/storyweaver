@@ -12,6 +12,7 @@ from storyweaver.domain.story import AgeBand, Character, Line, Scene, Story
 from storyweaver.storage.models import (
     DELETABLE_STATUSES,
     CharacterRow,
+    ImageStatus,
     SceneRow,
     SceneStatus,
     StoryRow,
@@ -152,6 +153,16 @@ class StoryRepository:
     async def set_scene_audio(self, scene: SceneRow, *, audio_key: str | None, status: SceneStatus) -> None:
         scene.audio_key = audio_key
         scene.status = status
+        await self._session.flush()
+
+    async def set_scene_image(self, scene: SceneRow, *, image_key: str | None, status: ImageStatus) -> None:
+        scene.image_key = image_key
+        scene.image_status = status
+        await self._session.flush()
+
+    async def mark_images_pending(self, story_row: StoryRow) -> None:
+        for scene in story_row.scenes:
+            scene.image_status = ImageStatus.PENDING
         await self._session.flush()
 
 

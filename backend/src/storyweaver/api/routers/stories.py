@@ -27,7 +27,7 @@ from storyweaver.orchestrator.story_service import (
 )
 from storyweaver.safety.guards import BRANDS
 from storyweaver.storage.blob import BlobError, BlobStore
-from storyweaver.storage.models import SceneRow, SceneStatus, StoryRow, StoryStatus
+from storyweaver.storage.models import ImageStatus, SceneRow, SceneStatus, StoryRow, StoryStatus
 from storyweaver.storage.repositories import StoryRepository
 
 router = APIRouter(prefix="/v1", tags=["stories"], dependencies=[Depends(require_api_key)])
@@ -67,13 +67,17 @@ class CharacterOut(BaseModel):
 
 
 AudioStatus = Literal["none", "pending", "ready", "failed"]
+ImageStatusOut = Literal["none", "pending", "ready", "placeholder", "failed"]
 
 
 class SceneOut(BaseModel):
     idx: int
     text: str
     lines: list[Line]
-    image_url: str | None = None  # V3
+    # A presigned PNG URL (same lifetime as audio_url). Set for "ready" and "placeholder".
+    image_url: str | None = None
+    # "placeholder": no GPU image could be made, so a soft wordless picture stands in. "none": no pictures.
+    image_status: ImageStatusOut = "none"
     # A presigned MP3 URL, valid for AUDIO_URL_TTL_SECONDS; poll the story again for a fresh one.
     audio_url: str | None = None
     # "pending" while the page's narration is queued; "none" when the story has no narration.
@@ -234,7 +238,8 @@ async def delete_story(story_id: uuid.UUID, request: Request, deletion: StoryDel
         return problem_response(
             request,
             status.HTTP_503_SERVICE_UNAVAILABLE,
-            "The story is hidden, but its audio couldn't be removed yet. Please try again shortly.",
+            "The story is hidden, but its audio and pictures couldn't be removed yet. "
+            "Please try again shortly.",
             headers={"Retry-After": "30"},
             extra={"code": "delete_incomplete"},
         )
@@ -254,10 +259,20 @@ def _scene_out(story: StoryRow, scene: SceneRow, blobs: BlobStore | None, ttl: i
             audio_status = "ready"
         elif scene.status == SceneStatus.TEXT_READY:
             audio_status = "pending"
+    image_url = None
+    image_status: ImageStatusOut = "none"
+    if scene.image_status in (ImageStatus.READY, ImageStatus.PLACEHOLDER):
+        if scene.image_key and blobs is not None:
+            image_url = blobs.presigned_get_url(scene.image_key, ttl)
+            image_status = "ready" if scene.image_status == ImageStatus.READY else "placeholder"
+    elif scene.image_status in (ImageStatus.PENDING, ImageStatus.FAILED):
+        image_status = "pending" if scene.image_status == ImageStatus.PENDING else "failed"
     return SceneOut(
         idx=scene.idx,
         text=scene.text,
         lines=[Line.model_validate(line) for line in scene.lines],
+        image_url=image_url,
+        image_status=image_status,
         audio_url=audio_url,
         audio_status=audio_status,
     )

@@ -68,8 +68,19 @@ class Settings(BaseSettings):
     s3_access_key_id: SecretStr | None = None
     s3_secret_access_key: SecretStr | None = None
     s3_create_bucket: bool = False
-    # Lifetime of the presigned audio URLs in GET /v1/stories/{id}. The UI re-polls for fresh ones.
+    # Lifetime of the presigned audio and image URLs in GET /v1/stories/{id}. The UI re-polls for fresh ones.
     audio_url_ttl_seconds: int = Field(default=3600, ge=60, le=7 * 24 * 3600)
+    # Illustrations (plan V3), stored in the same bucket as the audio. "placeholder" draws a soft wordless
+    # picture for every page (no GPU); "none" turns images off. GPU engines arrive in V3 steps 3-4.
+    image_engine: Literal["none", "placeholder"] = "placeholder"
+    # Generation settings. Every one is part of the image cache key (imaging/params.py).
+    image_model: str = "stabilityai/stable-diffusion-xl-base-1.0"
+    image_model_revision: str = "main"
+    image_width: int = Field(default=1152, ge=256, le=2048)
+    image_height: int = Field(default=896, ge=256, le=2048)
+    image_sampler: str = "dpmpp_2m_karras"
+    image_steps: int = Field(default=25, ge=1, le=100)
+    image_guidance: float = Field(default=6.0, ge=0, le=20)
     # Delete stories (rows and audio) this many days after creation; 0 keeps them forever (docs/privacy.md).
     story_retention_days: int = Field(default=30, ge=0, le=3650)
     retention_sweep_seconds: float = Field(default=3600.0, ge=10)
