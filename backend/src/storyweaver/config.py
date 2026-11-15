@@ -91,7 +91,21 @@ class Settings(BaseSettings):
     )
     @classmethod
     def _blank_key_is_unset(cls, value: object) -> object:
-        return None if isinstance(value, str) and not value.strip() else value
+        """Blank means unset, and surrounding whitespace is always a paste artefact.
+
+        Pasting a credential into a web console (HF Space Secrets, Vercel) easily carries a trailing newline
+        or space. No credential legitimately has one, and an unstripped secret fails in the least obvious
+        way possible: S3 signs the request with the wrong key and returns a bare 403.
+        """
+        if not isinstance(value, str):
+            return value
+        return value.strip() or None
+
+    @field_validator("s3_region", "s3_bucket", mode="before")
+    @classmethod
+    def _strip_setting(cls, value: object) -> object:
+        """Same paste problem: a trailing space makes the bucket "not found" or the signature invalid."""
+        return value.strip() if isinstance(value, str) else value
 
     @field_validator("s3_endpoint_url", "s3_public_endpoint_url", mode="after")
     @classmethod

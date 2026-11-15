@@ -19,6 +19,22 @@ class BlobError(Exception):
     """The object store could not complete a request (outage, credentials, missing bucket)."""
 
 
+def s3_error(exc: Exception) -> str:
+    """`ClientError` alone cannot be diagnosed; S3 puts the useful part in the response.
+
+    Returns something like `ClientError(NoSuchBucket, HTTP 404)`. The code and status say whether the
+    bucket name, the key, the key's permissions or the region is wrong. Never includes credentials: only
+    the error code and HTTP status are taken, never the request headers or the signature.
+    """
+    response = getattr(exc, "response", None)
+    if isinstance(response, dict):
+        code = response.get("Error", {}).get("Code")
+        status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+        if code:
+            return f"{type(exc).__name__}({code}{f', HTTP {status}' if status else ''})"
+    return type(exc).__name__
+
+
 class BlobStore(Protocol):
     async def put(self, key: str, data: bytes, content_type: str) -> None: ...
 
@@ -90,7 +106,7 @@ class S3BlobStore:
                 ContentType=content_type,
             )
         except Exception as exc:
-            raise BlobError(f"Upload of {key} failed: {type(exc).__name__}") from exc
+            raise BlobError(f"Upload of {key} failed: {s3_error(exc)}") from exc
 
     def presigned_get_url(self, key: str, expires_seconds: int) -> str:
         url: str = self._signer.generate_presigned_url(
@@ -104,7 +120,7 @@ class S3BlobStore:
         try:
             await asyncio.to_thread(self._client.delete_object, Bucket=self._config.bucket, Key=key)
         except Exception as exc:
-            raise BlobError(f"Delete of {key} failed: {type(exc).__name__}") from exc
+            raise BlobError(f"Delete of {key} failed: {s3_error(exc)}") from exc
 
     async def delete_prefix(self, prefix: str) -> int:
         # One DeleteObject per key, not DeleteObjects: a story has a handful of files, and the batch call
@@ -118,7 +134,7 @@ class S3BlobStore:
         except BlobError:
             raise
         except Exception as exc:
-            raise BlobError(f"Delete of {prefix}* failed: {type(exc).__name__}") from exc
+            raise BlobError(f"Delete of {prefix}* failed: {s3_error(exc)}") from exc
         return len(keys)
 
     def _list_keys(self, prefix: str) -> list[str]:
@@ -150,9 +166,9 @@ class S3BlobStore:
                 try:
                     await asyncio.to_thread(self._client.create_bucket, Bucket=self._config.bucket)
                 except Exception as exc:
-                    raise BlobError(f"Could not create bucket: {type(exc).__name__}") from exc
+                    raise BlobError(f"Could not create bucket: {s3_error(exc)}") from exc
             except Exception as exc:
-                raise BlobError(f"Object storage unreachable: {type(exc).__name__}") from exc
+                raise BlobError(f"Object storage unreachable: {s3_error(exc)}") from exc
             self._bucket_ready = True
 
 

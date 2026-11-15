@@ -1,8 +1,9 @@
 # StoryWeaver
 
 A voice-first, illustrated children's audiobook generator (text ↔ image ↔ speech) for ages 4–6.
-A parent types a story idea. StoryWeaver checks that the idea is safe, plans a 5–6 page bedtime story with an
-LLM, checks the finished story again, and shows it as a picture book.
+A parent types **or speaks** a story idea. StoryWeaver checks that the idea is safe, plans a 5–6 page bedtime
+story with an LLM, checks the finished story again, and shows it as a picture book **that reads itself
+aloud**, with a different voice for each character.
 
 StoryWeaver is also a learning project. It covers an MCP server, quota-aware LLM routing, child-safety
 guardrails, data collection, fine-tuning, RAG and system design, built version by version on free tiers.
@@ -12,14 +13,14 @@ guardrails, data collection, fine-tuning, RAG and system design, built version b
 |---|---|
 | **Live app** | https://storyweaver-eight-woad.vercel.app |
 | **Backend (HF ZeroGPU Space)** | https://gaggaranushka-storyweaver.hf.space ([Space page](https://huggingface.co/spaces/gaggaranushka/storyweaver)) |
-| **Current release** | `v1.0.2` (13 Nov 2026) |
+| **Current release** | `v2.0.3` (15 Nov 2026) |
 
 ---
 
 ## Contents
 
 1. [Status](#status)
-2. [Features (V1)](#features-v1)
+2. [Features](#features)
 3. [Architecture](#architecture)
 4. [Repository structure](#repository-structure)
 5. [API](#api)
@@ -42,7 +43,7 @@ guardrails, data collection, fine-tuning, RAG and system design, built version b
 | V1 | Text storyteller + MCP server v1 | ✅ live, all exit criteria met | `v1.0.0` |
 | V1.1 | Friendlier guardrails (brand ideas adapted, refusal message per category, 30-word scene minimum) | ✅ live | `v1.0.1` |
 | V1.0.2 | Busy ideas wait and resubmit automatically; Next.js 16.4.3 security fix | ✅ live | `v1.0.2` |
-| V2 | Talking storybook (speech ↔ text) | ⏭ next | — |
+| V2 | Talking storybook (speech ↔ text): voice input, narrated pages, object storage | ✅ live, all exit criteria met | `v2.0.3` |
 | V3–V10 | Images, RAG, vision, fine-tuning, alignment, interactivity, production hardening, polish | planned | — |
 
 **V1 exit criteria (all met):**
@@ -51,9 +52,16 @@ guardrails, data collection, fine-tuning, RAG and system design, built version b
 - The MCP server creates and reads stories from Claude Desktop and the MCP Inspector.
 - Quota-aware routing falls back to another model when one runs low.
 
+**V2 exit criteria (all met):**
+- A spoken prompt becomes a narrated story, live.
+- The Orpheus → Kokoro fallback was demonstrated by forcing the daily quota to zero: the story still narrated, on Kokoro, while a request that *named* an Orpheus voice correctly returned 429 instead of silently switching voice.
+
+The V2 release — including the two failed tags and the post-release outage, with causes and fixes — is
+written up in [`docs/release-v2.md`](docs/release-v2.md).
+
 ---
 
-## Features (V1)
+## Features
 
 **Story generation**
 - **One strict-JSON planner call** to Groq `openai/gpt-oss-20b`, using strict JSON-schema mode.
@@ -82,14 +90,24 @@ guardrails, data collection, fine-tuning, RAG and system design, built version b
 - **Reservation before every Groq call:** Redis sliding-window counters mirror Groq's free-tier limits per organisation (requests and tokens, per minute and per day).
 - **Fallback:** when a model is near its limit or returns 429, the router falls back to another model or cools down.
 
+**Speech (V2)**
+- **Voice input:** the parent records an idea in the browser (MediaRecorder) and it is transcribed by Groq `whisper-large-v3-turbo`, with **faster-whisper** on the Space's CPU as the fallback. `STT_ENGINE=local` keeps voice off third-party servers entirely.
+- **Audio never touches disk.** The recording is posted as a raw request body (not multipart, which Starlette spools to a temp file), held in memory with a 10 MB cap, decoded in-process with PyAV, transcribed and dropped. Neither the audio nor the transcript is logged.
+- **Rejected before transcription:** not audio, over 10 MB, longer than 60 s, or silent — each with a message a parent can act on.
+- **Narration:** every page is read aloud, **one voice per character** assigned deterministically from the story id, so a character sounds the same throughout.
+- **Two TTS engines behind one interface:** Groq **Orpheus** while its daily quota lasts, then **Kokoro** (ONNX, on CPU). The engine is chosen **once per story** so voices never mix mid-story.
+- **Audio stored in Backblaze B2** ([ADR-0004](docs/decisions/ADR-0004-backblaze-b2-object-storage.md)) in a private bucket, served to the browser as presigned GET URLs that expire.
+- **Stories expire after 30 days** and can be deleted on demand — rows and audio together.
+
 **Frontend**
 - Prompt form with 5 or 6 pages, a progress screen that polls with backoff, and a page-by-page storybook (buttons and arrow keys).
 - Friendly status messages, including a note explaining the safety-check wait.
 - **Busy auto-wait (v1.0.2):** on a 429 the form counts down and resubmits with the same Idempotency-Key, with a Cancel link.
+- **Mic recorder and a per-page audio player (V2)**, with a note beside the mic explaining what happens to the recording, and a `/privacy` page.
 - A `/status` page showing backend, GPU and Groq health.
 
 **MCP server**
-- Tools `create_story`, `get_story` and `get_job_status`, the resource `story://{id}`, and the prompt `bedtime_story`.
+- Tools `create_story`, `get_story`, `get_job_status`, and **`transcribe` and `narrate` (V2)**; resources `story://{id}` and **`voices://list`**; the prompt `bedtime_story`.
 - It is a thin adapter over the REST API.
 
 **Operations**
@@ -111,19 +129,23 @@ flowchart LR
     MCP -->|"REST /v1 + X-API-Key"| API
 
     subgraph Space["Hugging Face ZeroGPU Space: one gr.Server process"]
-        API["FastAPI routes<br/>/v1/stories, /v1/jobs, /health"]
-        Worker["In-process async worker<br/>(plan jobs)"]
+        API["FastAPI routes<br/>/v1/stories, /v1/jobs,<br/>/v1/speech, /health"]
+        Worker["In-process async worker<br/>(plan + tts jobs)"]
         GPU["Gradio GPU endpoints<br/>(@spaces.GPU)"]
-        Router["Quota-aware ModelRouter"]
+        Router["Quota-aware ModelRouter<br/>(LLM + TTS)"]
+        Kokoro["Kokoro ONNX + faster-whisper<br/>(CPU fallbacks)"]
         API --> Worker
         Worker --> Router
         API --> Router
+        Router --> Kokoro
     end
 
-    Router -->|"planner, repair,<br/>Prompt Guard, safeguard"| Groq[(Groq free tier)]
+    Router -->|"planner, repair, Prompt Guard,<br/>safeguard, Whisper, Orpheus"| Groq[(Groq free tier)]
     API --> PG[(Neon Postgres<br/>stories, scenes, jobs)]
     Worker --> PG
     Router --> Redis[(Upstash Redis<br/>quota counters)]
+    Worker -->|"narration MP3s"| B2[(Backblaze B2<br/>private bucket)]
+    Parent -.->|"presigned GET URL"| B2
     Worker -.->|optional| LF[(Langfuse)]
 ```
 
@@ -161,6 +183,8 @@ sequenceDiagram
 - **Every external model sits behind an interface with a fallback** (`LLMClient`, `Tracer`, …), so local and production run the same code and only `.env` differs.
 - **Groq free tier first** for every AI task it offers. Open-weight models only where Groq has none (images and embeddings in later versions).
 - **No Celery:** it doesn't support Windows, so jobs live in Postgres (`FOR UPDATE SKIP LOCKED`) and run on an in-process async worker.
+- **One TTS engine per story, booked up front.** Orpheus's free tier is about one story a day, so the router reserves a story's *whole* narration budget in a single atomic reservation, or picks Kokoro. A story never starts on Orpheus unless it can finish on Orpheus.
+- **A misconfigured audio store degrades, it doesn't crash** (learned the hard way in `v2.0.1`): stories still work without narration, and `/health/ready` reports `audio_storage: misconfigured`.
 
 ---
 
@@ -204,7 +228,7 @@ storyweaver/
 | `migrations/env.py` | Async Alembic environment |
 | `migrations/script.py.mako` | Template for new migrations |
 | `migrations/versions/0001_initial_v1_tables.py` | `stories`, `characters`, `scenes`, `jobs` |
-| `migrations/versions/0002_story_adaptation.py` | `stories.adaptation` (V1.1, expand-only) |
+| `migrations/versions/0002_story_adaptation.py` | `stories.adaptation` (V1.1, expand-only). V2 added **no** migration: narration reuses columns `0001` created |
 
 **`backend/src/storyweaver/`**
 
@@ -218,8 +242,19 @@ storyweaver/
 | `api/errors.py` | RFC 7807 `application/problem+json` error handlers |
 | `api/middleware.py` | `X-Request-ID`: accepted if valid, otherwise generated; echoed on every response |
 | `api/gpu_endpoints.py` | Gradio API endpoints for GPU work (`gpu_check`), each checking the API key |
-| `api/routers/health.py` | `/health/live` and `/health/ready` (database, Redis, worker) |
+| `api/routers/health.py` | `/health/live` and `/health/ready` (database, Redis, worker, audio storage) |
 | `api/routers/stories.py` | `POST /v1/stories`, `GET` and `DELETE /v1/stories/{id}`, `GET /v1/jobs/{id}` |
+| `api/routers/speech.py` | `POST /v1/speech/transcribe` (raw audio body, never multipart), `POST /v1/speech/narrate`, `GET /v1/speech/voices` |
+| `speech/audio_utils.py` | In-memory decode to 16 kHz mono with PyAV; size, duration and silence checks |
+| `speech/stt.py` / `speech/tts.py` | `STTEngine` / `TTSEngine` interfaces and their errors |
+| `speech/voices.py` | Voice catalogue per engine, and deterministic per-character voice assignment |
+| `adapters/groq_whisper.py` / `adapters/faster_whisper.py` | Speech-to-text: Groq, and the CPU fallback |
+| `adapters/groq_orpheus.py` / `adapters/kokoro_tts.py` | Text-to-speech: Groq Orpheus (≤ 200-character chunks), and Kokoro ONNX on CPU |
+| `routing/tts.py` | Books a story's whole Orpheus budget at once or picks Kokoro; paces Orpheus per minute |
+| `orchestrator/narration.py` | Turns a scene's lines into one MP3: per-speaker voices, pauses, concatenation |
+| `orchestrator/narration_jobs.py` | The per-scene `tts` job: synthesise, upload, record the key; falls back to Kokoro |
+| `orchestrator/story_deletion.py` | On-demand delete and the 30-day expiry sweep (rows and audio together) |
+| `storage/blob.py` | `BlobStore` and one `S3BlobStore` (B2 in production, SeaweedFS locally), presigned GET URLs |
 | `api/routers/diagnostics.py` | `POST /v1/echo` and `GET /v1/groq-check` |
 | `domain/story.py` | Story domain model and content rules (scene count, words per scene, readability, character IDs) |
 | `domain/readability.py` | Flesch-Kincaid grade, with no NLP dependency |
@@ -250,7 +285,7 @@ storyweaver/
 | Path | Description |
 |---|---|
 | `conftest.py`, `story_samples.py`, `db_helpers.py` | Shared fixtures, sample stories, Alembic helpers |
-| `unit/` | Story rules, strict schema, planner and repair, Groq adapter, router and routed LLM, safety, tracing, GPU endpoints, health/echo, DB URL parsing |
+| `unit/` | Story rules, strict schema, planner and repair, Groq adapter, router and routed LLM, safety, tracing, GPU endpoints, health/echo, DB URL parsing, audio decoding, the speech and narration APIs, voices, and the blob store |
 | `integration/` | Real Postgres + Redis: storage, the Redis quota script, and POST → worker → GET (Groq stubbed) |
 | `live/` | Opt-in tests against real Groq (planner and safety); they use real quota |
 
@@ -262,13 +297,17 @@ storyweaver/
 | `app/page.tsx` | Home page with the story form |
 | `app/story/[id]/page.tsx` | Story page (progress, then the book) |
 | `app/status/page.tsx` | Health page: backend, GPU and Groq |
+| `app/privacy/page.tsx` | Parent-facing privacy notice (what happens to a recording) |
+| `app/api/speech/transcribe/route.ts` | `POST` → backend transcribe; streams the raw audio body through, with the size cap |
+| `components/MicRecorder.tsx` | Records an idea with MediaRecorder and sends it for transcription |
+| `components/DeleteStory.tsx` | Delete this story and its audio, with a confirmation |
 | `app/globals.css` | Styles (light/dark tokens) |
 | `app/api/stories/route.ts` | `POST /api/stories` → backend `POST /v1/stories` (validates input; forwards only the allowed fields and Idempotency-Key) |
 | `app/api/stories/[id]/route.ts` | `GET` and `DELETE /api/stories/{id}` → backend (UUID checked first) |
 | `app/api/status/route.ts` | Aggregates the backend's health, Groq check and the GPU check |
 | `components/StoryForm.tsx` | Prompt form: Idempotency-Key per idea, busy countdown and auto-resubmit, Cancel |
-| `components/StoryViewer.tsx` | Polls the story with backoff and shows its progress, the book or the failure |
-| `components/StoryBook.tsx` | One scene per page, with previous/next buttons and arrow keys |
+| `components/StoryViewer.tsx` | Polls the story with backoff and shows its progress, the book or the failure; keeps polling for narration after the text is ready |
+| `components/StoryBook.tsx` | One scene per page, with previous/next buttons, arrow keys, and the page's audio player |
 | `lib/backend.ts` | **Server-only:** backend URL + API key, `forwardToBackend` (forwards Retry-After etc.) |
 | `lib/gradio.ts` | **Server-only:** Gradio's two-step HTTP API for GPU endpoints, with the HF token |
 | `lib/story-client.ts` | Browser-side calls to our own `/api` routes |
@@ -285,7 +324,7 @@ storyweaver/
 |---|---|
 | `server.py` | FastMCP server: tools, resource and prompt (stdio) |
 | `client.py` | HTTP client for `/v1` (no business logic) |
-| `tests/test_server.py` | Every tool, resource and prompt through the real MCP protocol in memory, with the API mocked |
+| `tests/test_server.py`, `tests/test_speech.py`, `tests/test_config.py` | Every tool, resource and prompt through the real MCP protocol in memory, with the API mocked; the speech tools; and where the API key is read from |
 | `README.md` | MCP setup, including the Claude Desktop config |
 | `pyproject.toml` / `uv.lock` | Separate uv project |
 
@@ -297,13 +336,15 @@ storyweaver/
 | `evaluation/data/prompts_v1.txt` | The 50 eval prompts |
 | `evaluation/results/json_validity_v1.{md,jsonl}` | Results: 50/50 valid |
 | `infra/docker-compose.yml` | Local stack: API (GPU), web, Postgres + pgvector, Redis, SeaweedFS S3 (:8333) |
-| `scripts/local_smoke.sh` | 46 end-to-end checks (incl. one real Whisper call and Kokoro narration) against the running stack; exits non-zero on failure |
+| `scripts/local_smoke.sh` | 48 end-to-end checks (incl. one real Whisper call and Kokoro narration) against the running stack; exits non-zero on failure |
 | `docs/decisions/ADR-0001-zerogpu-fastapi.md` | Why the app is a `gr.Server` with Gradio GPU endpoints alongside REST |
 | `docs/decisions/ADR-0002-redirect-brand-ideas.md` | Why brand ideas are adapted, not refused |
 | `docs/decisions/ADR-0003-pyav-gpl-ffmpeg.md` | Why PyAV's GPL-built FFmpeg is acceptable server-side (never distributed) |
+| `docs/decisions/ADR-0004-backblaze-b2-object-storage.md` | Why narration audio goes to Backblaze B2 rather than Cloudflare R2 (R2 needs a card) |
 | `docs/privacy.md`, `docs/dpia.md` | Parent-facing privacy notice, and the data protection impact assessment with its open actions (Groq retention, deletion, UI link) |
 | `docs/groq-limits.md` | Groq free-tier limits per model, as configured in `routing/quotas.py` |
 | `docs/release-v1.md` | V1 release checklist (accounts, secrets, order of deploys) |
+| `docs/release-v2.md` | V2 release checklist (Backblaze B2 setup, Space settings) **and the full release post-mortem**: the two failed tags, the startup crash, the narration outage, and what each one changed |
 | `.github/workflows/ci.yml` | CI: backend (ruff, mypy, unit + integration tests with Postgres/Redis, Space install check), frontend (lint, typecheck, test, build), MCP tests |
 | `.github/workflows/deploy-backend.yml` | On a `v*` tag: CI, export `requirements.txt` from `uv.lock`, push `backend/` to the Space |
 | `.github/scripts/deploy_space.py` | Uploads `backend/` to the Space with `huggingface_hub` |
@@ -321,6 +362,9 @@ All `/v1` routes need `X-API-Key`. Errors are RFC 7807 `application/problem+json
 | `GET` | `/v1/stories/{id}` | Status (`queued` → `planning` → `checking` → `ready` \| `failed`); content only when `ready`; `notice` if the idea was adapted |
 | `DELETE` | `/v1/stories/{id}` | Deletes the story, its pages and its audio files. **204**; **404** unknown; **409** still being made (`Retry-After`); **503** files not removed yet (story already hidden; retry). Stories also expire after `STORY_RETENTION_DAYS` (30) |
 | `GET` | `/v1/jobs/{id}` | Job status, attempts and next run time |
+| `POST` | `/v1/speech/transcribe` | **Raw audio body** (`audio/webm`, `mp4`, `wav`, …), not multipart. **200** `{text, engine, model, duration_seconds}`; **413** > 10 MB; **415** not audio; **422** empty, unreadable, silent, > 60 s, or no words; **429/503** busy or unavailable |
+| `POST` | `/v1/speech/narrate` | Body `{text, voice?}` (≤ 600 chars). **200** `audio/mpeg` with `X-TTS-Engine`, `X-TTS-Voice`, `X-Audio-Duration`; **422** blank, too long or unknown voice; **429** the named Orpheus voice has no quota (`Retry-After`) |
+| `GET` | `/v1/speech/voices` | Every voice `/narrate` accepts, per engine, with each engine's narrator |
 | `POST` | `/v1/echo` | Diagnostics |
 | `GET` | `/v1/groq-check` | One small Groq call |
 | `GET` | `/health/live`, `/health/ready` | No key; `ready` checks the database, Redis and the worker |
@@ -335,8 +379,14 @@ All `/v1` routes need `X-API-Key`. Errors are RFC 7807 `application/problem+json
 | tool | `create_story(prompt, age_band="4-6", num_scenes=5)` | `POST /v1/stories` |
 | tool | `get_story(story_id)` | `GET /v1/stories/{id}` |
 | tool | `get_job_status(job_id)` | `GET /v1/jobs/{id}` |
+| tool | `transcribe(audio_path)` (V2) | `POST /v1/speech/transcribe` |
+| tool | `narrate(text, voice?)` (V2) | `POST /v1/speech/narrate` |
 | resource | `story://{story_id}` | `GET /v1/stories/{id}` |
+| resource | `voices://list` (V2) | `GET /v1/speech/voices` |
 | prompt | `bedtime_story(favourite_animal, theme)` | — |
+
+`transcribe` accepts only audio file extensions and checks the size before reading, so a prompt cannot talk
+it into uploading an arbitrary local file. `narrate` saves the MP3 locally and returns its path.
 
 Setup, including the Claude Desktop config, is in [`mcp_server/README.md`](mcp_server/README.md).
 
@@ -356,7 +406,7 @@ Setup, including the Claude Desktop config, is in [`mcp_server/README.md`](mcp_s
 | Local | Docker compose: Postgres + pgvector, Redis, SeaweedFS S3 |
 | Quality | ruff, mypy (strict), pytest, ESLint, pre-commit, detect-secrets, GitHub Actions |
 
-V2 adds Backblaze B2 for narration audio ([ADR-0004](docs/decisions/ADR-0004-backblaze-b2-object-storage.md)). Later versions add Grafana Cloud, MLflow, DVC + DagsHub and
+Later versions add Grafana Cloud, MLflow, DVC + DagsHub and
 Prefect. See [`plan.md`](plan.md).
 
 ---
@@ -374,7 +424,7 @@ copy frontend\.env.example frontend\.env.local
 # 2. Full local stack: API (GPU) :7860, web :3000, Postgres :5432, Redis :6379, SeaweedFS S3 :8333
 docker compose -f infra/docker-compose.yml --env-file .env up --build
 
-# 3. Smoke test (Git Bash), 46 checks
+# 3. Smoke test (Git Bash), 48 checks
 bash scripts/local_smoke.sh .env
 ```
 
@@ -421,8 +471,8 @@ uv run pytest
 uv run --directory backend python ../evaluation/json_validity.py
 ```
 
-**Current counts (v1.0.2):** backend 153 unit + integration tests, frontend 12 Vitest tests, MCP 13 tests,
-and 33/33 smoke checks.
+**Current counts (v2.0.3):** backend 278 unit tests, frontend 32 Vitest tests, MCP 40 tests, and 48/48
+smoke checks.
 
 ---
 
@@ -434,7 +484,7 @@ and 33/33 smoke checks.
 | **Backend (HF Space)** | A pushed `v*` tag runs CI, then `deploy-backend.yml` uploads `backend/`. If `backend/` hasn't changed, no new Space commit is made |
 
 **Release process** (every version):
-1. **Local gate:** backend, frontend and MCP tests; Docker stack + smoke test (46/46); the version's exit criteria checked by hand.
+1. **Local gate:** backend, frontend and MCP tests; Docker stack + smoke test (48/48); the version's exit criteria checked by hand.
 2. **CI:** push `dev-vN` and wait for CI to pass.
 3. **Backend:** tag `vX.Y.Z` and push the tag, then check the Space:
    - runtime `RUNNING`;
@@ -470,7 +520,12 @@ docker run --rm -v "<frontend dir>:/w" -w /w node:24-alpine \
 | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` | optional | Turn tracing on |
 | `STORYWEAVER_API_URL` | Vercel env | The `*.hf.space` URL (not `huggingface.co/spaces/...`) |
 | `HF_TOKEN` | Vercel env | Read-only HF token; ZeroGPU charges GPU quota to it |
-| `POSTGRES_PASSWORD`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | `.env` | Local Docker stack |
+| `S3_ENDPOINT_URL`, `S3_REGION`, `S3_BUCKET` | Space **Variables**, `.env` | Narration audio store. For B2 the region is the middle segment of the endpoint (`s3.<region>.backblazeb2.com`), not an AWS region; a scheme-less endpoint is accepted and normalised to `https://` |
+| `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | Space **Secrets**, `.env` | B2 application key, scoped to the one bucket, Read and Write. Locally these are the SeaweedFS credentials instead |
+| `STT_ENGINE` | optional | `groq` (default) or `local` to keep voice processing on the Space |
+| `TTS_ENGINE` | optional | `auto` (default: Orpheus while quota lasts, else Kokoro), or force `orpheus` / `kokoro`. Set to `kokoro` on the Space and in the local stack, because Orpheus's free tier is about one story a day |
+| `STORY_RETENTION_DAYS` | optional | Delete stories and their audio this many days after creation (default 30; `0` keeps them) |
+| `POSTGRES_PASSWORD` | `.env` | Local Docker stack |
 
 Secrets go only in HF Space **Secrets** (Variables are public) and Vercel env. Never commit `.env`.
 
@@ -483,7 +538,7 @@ Secrets go only in HF Space **Secrets** (Variables are public) and Vercel env. N
 - **No tracked content in traces:** Langfuse doesn't capture prompts or stories unless `LANGFUSE_CAPTURE_CONTENT=true`.
 - **No secrets in the browser:** the API key exists only in server-side code (Vercel route handlers, the MCP server).
 - **Allowed models only:** no gated, non-commercial or GPL models (see `plan.md` §2.2).
-- **Voice (from V2):** audio will never be stored or logged.
+- **Voice:** a recording is held in memory only, never written to disk or logged, and neither is its transcript. `STT_ENGINE=local` keeps voice processing on the Space. Narration audio lives in a private bucket and reaches the browser only through expiring presigned URLs.
 
 ---
 
@@ -491,8 +546,8 @@ Secrets go only in HF Space **Secrets** (Variables are public) and Vercel env. N
 
 | Version | Theme | Highlights |
 |---|---|---|
-| **V2** | Talking storybook | Whisper STT (Groq, faster-whisper fallback), Orpheus TTS with a Kokoro fallback, S3 blob storage, mic recording, privacy docs, Playwright |
-| V3 | Illustrated storybook | Image generation on ZeroGPU, consistent characters |
+| ~~V2~~ | ~~Talking storybook~~ | **Done** — see Status above |
+| **V3** | Illustrated storybook | Image generation on ZeroGPU, consistent characters |
 | V4 | Story memory | RAG with pgvector |
 | V5 | Smart eyes | Image → text, image → speech |
 | V6 | My own storyteller | Fine-tuning I and distillation (Qwen3-4B) |

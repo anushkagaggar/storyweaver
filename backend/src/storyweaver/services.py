@@ -162,6 +162,17 @@ def build_blob_store(settings: Settings) -> BlobStore | None:
     if not settings.blob_storage_enabled:
         return None
     assert settings.s3_endpoint_url and settings.s3_access_key_id and settings.s3_secret_access_key  # noqa: S101
+    key_id = settings.s3_access_key_id.get_secret_value()
+    # What the process actually resolved, so a wrong Space setting is visible without guessing. The key is
+    # identified by its last 4 characters and its length only; the secret is never logged at all.
+    logger.info(
+        "Object storage: endpoint=%s region=%s bucket=%s key=...%s (%d chars)",
+        settings.s3_endpoint_url,
+        settings.s3_region,
+        settings.s3_bucket,
+        key_id[-4:],
+        len(key_id),
+    )
     try:
         return S3BlobStore(
             S3Config(

@@ -159,6 +159,35 @@ Three changes in `v2.0.2` so it cannot repeat:
 A bad endpoint is deliberately **not** rejected in the validator: raising there makes `Settings()` itself
 invalid, which fails at start-up just as hard as the crash it was meant to prevent.
 
+### After release: narration failed for ~5 hours on wrong B2 credentials
+
+Every `tts` job failed `upstream_unavailable` after three attempts, and the hourly expiry sweep logged
+`Delete of stories/<id>/* failed: ClientError`. The cause was simply that the wrong values had been entered
+for `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY` in the Space Secrets. Re-entering them fixed it.
+
+What made it slow to diagnose was ours, not Backblaze's: **every S3 failure was logged as
+`type(exc).__name__`**, so a wrong key, a missing bucket and an unreachable host all read `ClientError`.
+The code that identifies the fault sits in `exc.response["Error"]["Code"]` and was being discarded.
+
+Two things that narrowed it down, worth reusing:
+
+- Kokoro's `phonemizer` lines in the log prove synthesis ran, so the failure had to be *after* audio
+  existed — which leaves the upload.
+- The expiry sweep failing too meant it was not TTS-specific: a plain `delete` was failing against B2 as
+  well.
+
+Shipped in `v2.0.3`:
+
+- `s3_error()` reports the code and status, e.g. `ClientError(SignatureDoesNotMatch, HTTP 403)`;
+- `build_blob_store` logs what the process resolved — `endpoint=… region=… bucket=… key=...0001 (25 chars)`
+  — the last 4 characters and length of the key id only, never the secret. A wrong key is then one glance
+  away;
+- every S3 setting is stripped of surrounding whitespace, since a console paste can carry a newline.
+
+To test B2 settings without deploying, run the four operations the Space performs (`head_bucket`,
+`put_object`, `delete_object`; a bucket-scoped key gets `AccessDenied` on `list_buckets`, which is expected
+and unused).
+
 ### Lesson from `v2.0.0`: the gate runs on Windows, CI runs on Linux
 
 For anything that touches the filesystem, run the CI steps on Linux before tagging:

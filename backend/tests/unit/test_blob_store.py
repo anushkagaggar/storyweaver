@@ -7,7 +7,14 @@ import pytest
 
 from storyweaver.config import Settings
 from storyweaver.services import build_blob_store
-from storyweaver.storage.blob import InMemoryBlobStore, S3BlobStore, S3Config, scene_audio_key, story_prefix
+from storyweaver.storage.blob import (
+    InMemoryBlobStore,
+    S3BlobStore,
+    S3Config,
+    s3_error,
+    scene_audio_key,
+    story_prefix,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -150,3 +157,67 @@ async def test_delete_prefix_removes_only_that_story() -> None:
 async def test_delete_prefix_refuses_a_prefix_without_a_trailing_slash() -> None:
     with pytest.raises(ValueError, match="ending in '/'"):
         await InMemoryBlobStore().delete_prefix("stories/a")
+
+
+def test_s3_error_names_the_code_and_status_not_just_clienterror() -> None:
+    """'ClientError' alone cannot be diagnosed: the code says whether it is the bucket, key or region."""
+    from botocore.exceptions import ClientError
+
+    exc = ClientError(
+        {"Error": {"Code": "NoSuchBucket", "Message": "x"}, "ResponseMetadata": {"HTTPStatusCode": 404}},
+        "PutObject",
+    )
+
+    assert s3_error(exc) == "ClientError(NoSuchBucket, HTTP 404)"
+    assert s3_error(ValueError("plain")) == "ValueError"  # non-S3 errors still report their type
+
+
+@pytest.mark.parametrize(
+    "name", ["S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY", "S3_REGION", "S3_BUCKET", "S3_ENDPOINT_URL"]
+)
+def test_pasted_whitespace_is_stripped_from_every_s3_setting(
+    monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    """A trailing newline from a console paste made S3 sign with the wrong key and return a bare 403."""
+    clean = {
+        "S3_ACCESS_KEY_ID": "005abc",
+        "S3_SECRET_ACCESS_KEY": "K005abc",  # pragma: allowlist secret
+        "S3_REGION": "us-east-005",
+        "S3_BUCKET": "storyweaver-audio",
+        "S3_ENDPOINT_URL": "https://s3.us-east-005.backblazeb2.com",
+    }
+    for key, value in clean.items():
+        monkeypatch.setenv(key, f" {value}\n" if key == name else value)
+
+    settings = Settings()  # type: ignore[call-arg]
+    actual = {
+        "S3_ACCESS_KEY_ID": settings.s3_access_key_id.get_secret_value() if settings.s3_access_key_id else "",
+        "S3_SECRET_ACCESS_KEY": (
+            settings.s3_secret_access_key.get_secret_value() if settings.s3_secret_access_key else ""
+        ),
+        "S3_REGION": settings.s3_region,
+        "S3_BUCKET": settings.s3_bucket,
+        "S3_ENDPOINT_URL": settings.s3_endpoint_url,
+    }[name]
+    assert actual == clean[name]
+
+
+def test_the_object_storage_log_line_never_includes_the_secret(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    for key, value in (
+        ("S3_ENDPOINT_URL", "https://s3.us-east-005.backblazeb2.com"),
+        ("S3_REGION", "us-east-005"),
+        ("S3_BUCKET", "storyweaver-audio"),
+        ("S3_ACCESS_KEY_ID", "005keyid0001"),
+        ("S3_SECRET_ACCESS_KEY", "K005supersecretvalue"),  # pragma: allowlist secret
+    ):
+        monkeypatch.setenv(key, value)
+
+    with caplog.at_level(logging.INFO):
+        build_blob_store(Settings())  # type: ignore[call-arg]
+
+    logged = "\n".join(r.getMessage() for r in caplog.records)
+    assert "bucket=storyweaver-audio" in logged and "region=us-east-005" in logged
+    assert "...0001 (12 chars)" in logged  # enough to spot the wrong key
+    assert "supersecret" not in logged and "005keyid0001" not in logged
