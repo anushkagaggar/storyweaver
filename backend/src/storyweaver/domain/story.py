@@ -1,8 +1,8 @@
 """Story domain model (plan §6.1) and the content rules a planned story must satisfy.
 
 Structure is enforced by Pydantic; content rules (scene count, words per scene, reading level, character
-references) are checked by `story_problems()`, which returns human-readable problems so the planner can
-send them back to the LLM in a single repair call.
+references and guests) are checked by `story_problems()`, which returns human-readable problems so the
+planner can send them back to the LLM in a single repair call.
 """
 
 import hashlib
@@ -23,6 +23,11 @@ MAX_SCENE_WORDS = 120
 TARGET_SCENE_WORDS = 65
 WORDS_PER_SHORT_SENTENCE = 7
 MAX_FK_GRADE = 4.0
+# Guests: characters who speak or appear without being declared (a wise owl giving directions). They get a
+# voice but no fixed look, so they are limited to a few scenes; anyone who recurs more must be declared.
+MAX_EXTRAS = 2
+MAX_EXTRA_SCENES = 2
+CHARACTER_ID = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 
 
 class _Model(BaseModel):
@@ -30,7 +35,7 @@ class _Model(BaseModel):
 
 
 class Character(_Model):
-    id: str = Field(pattern=r"^[a-z][a-z0-9_]{0,31}$")
+    id: str = Field(pattern=CHARACTER_ID.pattern)
     name: str = Field(min_length=1, max_length=40)
     species: str = Field(min_length=1, max_length=40)
     visual: str = Field(
@@ -102,6 +107,75 @@ def idea_name_words(idea: str) -> frozenset[str]:
     return frozenset(w for w in re.findall(r"[a-z]+", idea.lower()) if len(w) >= 3 and w not in _COMMON_WORDS)
 
 
+def _ref_key(ref: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", ref.lower()).strip("_")
+
+
+def resolve_character_refs(story: Story) -> Story:
+    """Map loose references to a declared character onto its id ("Pip", "PIP" -> "pip"; "Narrator").
+
+    Without this a slip in the planner's casing would turn a main character into a guest with a different
+    voice. Anything that still matches no declared character is left alone (it may be a guest).
+    """
+    aliases = {_ref_key(c.name): c.id for c in story.characters}
+    aliases.update({_ref_key(c.id): c.id for c in story.characters})  # ids win over names
+    aliases[NARRATOR] = NARRATOR
+
+    def resolve(ref: str) -> str:
+        return aliases.get(_ref_key(ref), ref)
+
+    scenes = [
+        scene.model_copy(
+            update={
+                "characters": list(dict.fromkeys(resolve(ref) for ref in scene.characters)),
+                "lines": [line.model_copy(update={"speaker": resolve(line.speaker)}) for line in scene.lines],
+            }
+        )
+        for scene in story.scenes
+    ]
+    return story.model_copy(update={"scenes": scenes})
+
+
+def story_extras(story: Story) -> dict[str, list[int]]:
+    """Guests (undeclared speakers or scene characters) and the scene numbers they appear in."""
+    declared = {c.id for c in story.characters} | {NARRATOR}
+    found: dict[str, list[int]] = {}
+    for scene in story.scenes:
+        refs = set(scene.characters) | {line.speaker for line in scene.lines}
+        for ref in sorted(refs - declared):
+            found.setdefault(ref, []).append(scene.idx)
+    return found
+
+
+def _extra_problems(story: Story, banned_name_words: frozenset[str]) -> list[str]:
+    problems: list[str] = []
+    extras = story_extras(story)
+    for ref, scenes in extras.items():
+        if not CHARACTER_ID.match(ref):
+            problems.append(
+                f"'{ref}' (scenes {scenes}) is not a character id. Use '{NARRATOR}', a declared character "
+                "id, or a short lowercase id (letters, digits, underscores) for a one-scene guest."
+            )
+        elif len(scenes) > MAX_EXTRA_SCENES:
+            problems.append(
+                f"'{ref}' appears in scenes {scenes} but is not in \"characters\". A character in more than "
+                f'{MAX_EXTRA_SCENES} scenes must be declared in "characters" with a visual description.'
+            )
+        borrowed = sorted(set(re.findall(r"[a-z]+", ref)) & banned_name_words)
+        if borrowed:
+            problems.append(
+                f"Guest '{ref}' uses {borrowed} from the idea, which names a brand or trademarked character. "
+                "Give it a new, original name."
+            )
+    if len(extras) > MAX_EXTRAS:
+        problems.append(
+            f'The story has {len(extras)} guests who are not in "characters" ({sorted(extras)}); at most '
+            f'{MAX_EXTRAS} are allowed. Declare the important ones in "characters", and let the narrator '
+            "tell what the others say."
+        )
+    return problems
+
+
 def story_problems(
     story: Story, expected_scenes: int, *, banned_name_words: frozenset[str] = frozenset()
 ) -> list[str]:
@@ -131,8 +205,6 @@ def story_problems(
                 f"Character name '{character.name}' uses {borrowed} from the idea, which names a brand or "
                 "trademarked character. Invent a new, original name and use it everywhere in the story."
             )
-    known = set(character_ids)
-
     for scene in story.scenes:
         words = word_count(scene.text)
         if not MIN_SCENE_WORDS <= words <= MAX_SCENE_WORDS:
@@ -140,15 +212,7 @@ def story_problems(
                 f"Scene {scene.idx} text has {words} words; it must have "
                 f"{MIN_SCENE_WORDS}-{MAX_SCENE_WORDS} words. {_length_fix(words)}"
             )
-        unknown_characters = sorted(set(scene.characters) - known)
-        if unknown_characters:
-            problems.append(f"Scene {scene.idx} lists unknown character ids {unknown_characters}.")
-        unknown_speakers = sorted({line.speaker for line in scene.lines} - known - {NARRATOR})
-        if unknown_speakers:
-            problems.append(
-                f"Scene {scene.idx} has lines from unknown speakers {unknown_speakers}; "
-                f"use '{NARRATOR}' or a character id."
-            )
+    problems.extend(_extra_problems(story, banned_name_words))
 
     grade = reading_grade(story.full_text)
     if grade > MAX_FK_GRADE:

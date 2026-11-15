@@ -9,6 +9,7 @@ from storyweaver.speech.voices import (
     ORPHEUS_VOICES,
     assign_voices,
     voice,
+    with_guest_voices,
 )
 
 pytestmark = pytest.mark.unit
@@ -81,6 +82,21 @@ def test_more_characters_than_voices_reuse_voices() -> None:
     characters = [f"c{i}" for i in range(7)]
     voices = assign_voices("orpheus", characters, "s")
     assert len(voices) == 8 and set(voices.values()) <= {v.id for v in ORPHEUS_VOICES}
+
+
+def test_guests_get_voices_nobody_else_uses() -> None:
+    # Three main characters leave Orpheus exactly two free voices: one for each allowed guest.
+    main = assign_voices("orpheus", ["pip", "olly", "mama_owl"], "s")
+    voices = with_guest_voices("orpheus", main, ["owl", "fish"], "s")
+    assert {k: voices[k] for k in main} == main  # main characters keep their voices
+    assert len(set(voices.values())) == 6  # narrator, 3 characters, 2 guests: all different
+    assert voices == with_guest_voices("orpheus", main, ["fish", "owl"], "s")  # stable on every page
+
+
+def test_guests_reuse_voices_once_the_pool_is_used_up() -> None:
+    main = assign_voices("orpheus", ["a", "b", "c", "d", "e"], "s")
+    voices = with_guest_voices("orpheus", main, ["owl"], "s")
+    assert voices["owl"] in {v.id for v in ORPHEUS_VOICES}
 
 
 def test_voice_lookup() -> None:

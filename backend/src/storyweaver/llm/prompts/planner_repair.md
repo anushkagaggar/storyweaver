@@ -9,4 +9,5 @@ While fixing, keep every rule from the instructions, including the ones that alr
 - exactly {num_scenes} scenes; each scene's "text" is 7-10 short sentences ({min_words}-{max_words} words,
   about 60-80); when a problem says how many sentences to add, add at least that many to that scene;
 - very easy reading (Flesch-Kincaid grade 4 or lower): short sentences, simple one- and two-syllable words;
-- every character used in a scene or line is listed in "characters".
+- main characters are listed in "characters" and referred to by their exact id; at most two guests who are
+  not listed, each in at most two scenes.

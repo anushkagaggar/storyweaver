@@ -14,6 +14,7 @@ from storyweaver.domain.story import (
     SceneCount,
     Story,
     idea_name_words,
+    resolve_character_refs,
     story_problems,
 )
 from storyweaver.llm.client import ChatMessage, LLMClient, LLMInvalidOutputError, LLMResult
@@ -166,7 +167,7 @@ class StoryPlanner:
         except ValidationError as error:
             return None, _format_validation_error(error)
         try:
-            story = planned.to_story(age_band=request.age_band, story_key=story_key)
+            story = resolve_character_refs(planned.to_story(age_band=request.age_band, story_key=story_key))
         except ValidationError as error:
             return None, _format_validation_error(error)
         return story, story_problems(story, request.num_scenes, banned_name_words=request.banned_name_words)

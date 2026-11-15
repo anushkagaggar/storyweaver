@@ -32,12 +32,15 @@ Sessions = async_sessionmaker[AsyncSession]
 
 
 class StubLLM:
+    def __init__(self, planned: dict[str, Any] | None = None) -> None:
+        self.planned = planned or make_planned_story(5)
+
     async def complete_json(self, **_: Any) -> Any:
         import json
 
         from storyweaver.llm.client import LLMResult
 
-        return LLMResult(json.dumps(make_planned_story(5)), "p", 100, 900, 5.0, "stop")
+        return LLMResult(json.dumps(self.planned), "p", 100, 900, 5.0, "stop")
 
 
 class AllowAll:
@@ -72,8 +75,16 @@ async def db(database_url: str) -> AsyncIterator[Sessions]:
     await engine.dispose()
 
 
-def _worker(sessions: Sessions, narrator: Narrator, blobs: InMemoryBlobStore) -> Worker:
-    planner = StoryPlanner(StubLLM(), planner_model="p", repair_model="r", max_tokens=100, temperature=0.0)  # type: ignore[arg-type]
+def _worker(
+    sessions: Sessions, narrator: Narrator, blobs: InMemoryBlobStore, llm: StubLLM | None = None
+) -> Worker:
+    planner = StoryPlanner(
+        llm or StubLLM(),  # type: ignore[arg-type]
+        planner_model="p",
+        repair_model="r",
+        max_tokens=100,
+        temperature=0.0,
+    )
     narration = StoryNarration(narrator)
     return Worker(
         sessions,
@@ -140,6 +151,28 @@ async def test_story_is_ready_at_once_and_each_scene_gets_audio(
     assert content_type == "audio/mpeg" and len(data) > 1000
     assert kokoro.calls == []
     assert {voice for _, voice in orpheus.calls} == {"hannah", voices["glow"]}  # pip never speaks
+
+
+async def test_a_guest_speaks_in_its_own_voice_on_every_page(
+    client: TestClient, db: Sessions, blobs: InMemoryBlobStore
+) -> None:
+    planned = make_planned_story(5)
+    for idx in (2, 4):  # a wise owl, not declared, says one line in two scenes
+        planned["scenes"][idx - 1]["lines"].append({"speaker": "owl", "text": "Follow the stars."})
+    orpheus = FakeTTS("orpheus")
+    tts, _ = make_router(orpheus, FakeTTS("kokoro"))
+    worker = _worker(db, Narrator(tts), blobs, StubLLM(planned))
+
+    story_id = await _plan(client, worker)
+    while await worker.run_once():
+        pass
+
+    assert [s["audio_status"] for s in _story(client, story_id)["scenes"]] == ["ready"] * 5
+    async with db() as s:
+        main = {c.voice_id for c in (await s.execute(select(CharacterRow))).scalars()}
+    owl_voices = {voice for text_, voice in orpheus.calls if text_ == "Follow the stars."}
+    assert len(owl_voices) == 1  # the same voice on both pages
+    assert owl_voices.isdisjoint(main | {"hannah"})  # not the narrator's, nor a main character's
 
 
 async def test_without_orpheus_quota_the_whole_story_uses_kokoro(

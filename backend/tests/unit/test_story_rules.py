@@ -4,7 +4,14 @@ import pytest
 from pydantic import ValidationError
 
 from storyweaver.domain.readability import count_syllables, flesch_kincaid_grade
-from storyweaver.domain.story import Story, character_seed, idea_name_words, story_problems
+from storyweaver.domain.story import (
+    Story,
+    character_seed,
+    idea_name_words,
+    resolve_character_refs,
+    story_extras,
+    story_problems,
+)
 from storyweaver.llm.schemas import PlannedStory
 
 pytestmark = pytest.mark.unit
@@ -59,14 +66,64 @@ def test_scene_word_limits(planned_story: dict[str, Any], text: str, fragment: s
     assert any(fragment in p and "Scene 1" in p for p in problems)
 
 
-def test_unknown_character_and_speaker(planned_story: dict[str, Any]) -> None:
-    planned_story["scenes"][1]["characters"] = ["pip", "ghost"]
-    planned_story["scenes"][1]["lines"].append({"speaker": "ghost", "text": "Boo"})
+def _add_guest(planned_story: dict[str, Any], guest: str, scene_numbers: list[int]) -> None:
+    for idx in scene_numbers:
+        scene = planned_story["scenes"][idx - 1]
+        scene["characters"] = [*scene["characters"], guest]
+        scene["lines"].append({"speaker": guest, "text": "Hello there."})
+
+
+def test_a_guest_in_one_or_two_scenes_is_allowed(planned_story: dict[str, Any]) -> None:
+    _add_guest(planned_story, "owl", [2, 4])
+    story = _story(planned_story)
+
+    assert story_problems(story, 5) == []
+    assert story_extras(story) == {"owl": [2, 4]}
+
+
+def test_a_guest_in_three_scenes_must_be_declared(planned_story: dict[str, Any]) -> None:
+    _add_guest(planned_story, "owl", [1, 2, 3])
 
     problems = story_problems(_story(planned_story), 5)
 
-    assert any("unknown character ids ['ghost']" in p for p in problems)
-    assert any("unknown speakers ['ghost']" in p for p in problems)
+    assert any("'owl' appears in scenes [1, 2, 3]" in p and "must be declared" in p for p in problems)
+
+
+def test_at_most_two_guests(planned_story: dict[str, Any]) -> None:
+    for n, guest in enumerate(["owl", "fish", "frog"], start=1):
+        _add_guest(planned_story, guest, [n])
+
+    problems = story_problems(_story(planned_story), 5)
+
+    assert any("3 guests" in p and "['fish', 'frog', 'owl']" in p for p in problems)
+
+
+def test_a_guest_needs_an_id_like_name(planned_story: dict[str, Any]) -> None:
+    _add_guest(planned_story, "Mr Owl!", [2])
+
+    problems = story_problems(resolve_character_refs(_story(planned_story)), 5)
+
+    assert any("'Mr Owl!' (scenes [2]) is not a character id" in p for p in problems)
+
+
+def test_guests_may_not_borrow_names_from_a_brand_idea(planned_story: dict[str, Any]) -> None:
+    _add_guest(planned_story, "jerry", [2])
+
+    problems = story_problems(_story(planned_story), 5, banned_name_words=frozenset({"jerry"}))
+
+    assert any("Guest 'jerry'" in p for p in problems)
+
+
+def test_loose_references_to_a_declared_character_are_resolved(planned_story: dict[str, Any]) -> None:
+    scene = planned_story["scenes"][1]
+    scene["characters"] = ["Pip", "GLOW", "pip"]
+    scene["lines"] = [{"speaker": "Narrator", "text": "Hi."}, {"speaker": "Pip", "text": "Hello."}]
+
+    story = resolve_character_refs(_story(planned_story))
+
+    assert story.scenes[1].characters == ["pip", "glow"]
+    assert [line.speaker for line in story.scenes[1].lines] == ["narrator", "pip"]
+    assert story_extras(story) == {}  # not mistaken for guests with their own voice
 
 
 def test_duplicate_and_reserved_character_ids(planned_story: dict[str, Any]) -> None:

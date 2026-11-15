@@ -27,7 +27,7 @@ from storyweaver.jobs.worker import DeferJobError, JobContext, PermanentJobError
 from storyweaver.orchestrator.narration import NarratedAudio, Narrator, scene_lines
 from storyweaver.routing.router import QuotaExhaustedError
 from storyweaver.speech.tts import EngineName, TTSRateLimitedError, TTSUnavailableError
-from storyweaver.speech.voices import NARRATOR_VOICE, assign_voices
+from storyweaver.speech.voices import NARRATOR_VOICE, assign_voices, with_guest_voices
 from storyweaver.storage.blob import BlobError, BlobStore, scene_audio_key
 from storyweaver.storage.models import SceneStatus, StoryRow, StoryStatus
 from storyweaver.storage.repositories import StoryRepository
@@ -70,6 +70,13 @@ def stored_voices(row: StoryRow, engine: EngineName) -> dict[str, str]:
     return voices
 
 
+def story_guests(row: StoryRow) -> list[str]:
+    """Speakers anywhere in the story who aren't declared characters (domain MAX_EXTRAS guests)."""
+    declared = {c.char_key for c in row.characters} | {NARRATOR}
+    speakers = {Line.model_validate(line).speaker for scene in row.scenes for line in scene.lines}
+    return sorted(speakers - declared)
+
+
 class NarrateSceneJob:
     """Worker handler for `tts` jobs. Holds no DB transaction while speech is synthesized."""
 
@@ -96,11 +103,12 @@ class NarrateSceneJob:
             if row.tts_engine not in NARRATOR_VOICE:
                 raise PermanentJobError("no_engine", f"Story {story_id} has no narration engine.")
             engine: EngineName = row.tts_engine  # narrowed by the check above
-            voices = stored_voices(row, engine)
+            guests = story_guests(row)
+            voices = with_guest_voices(engine, stored_voices(row, engine), guests, str(story_id))
             lines = [Line.model_validate(line) for line in scene.lines]
             character_ids = [c.char_key for c in row.characters]
 
-        audio = await self._speak(context, story_id, lines, engine, voices, character_ids)
+        audio = await self._speak(context, story_id, lines, engine, voices, character_ids, guests)
         key = scene_audio_key(story_id, idx)
         try:
             await self._blobs.put(key, audio.mp3, MP3)
@@ -145,6 +153,7 @@ class NarrateSceneJob:
         engine: EngineName,
         voices: Mapping[str, str],
         character_ids: Sequence[str],
+        guests: Sequence[str],
     ) -> NarratedAudio:
         try:
             return await self._narrator.narrate(scene_lines(lines, voices), engine)
@@ -161,7 +170,9 @@ class NarrateSceneJob:
             reason = f"Orpheus unavailable on the last attempt ({exc})"
 
         logger.warning("Story %s: %s; narrating this scene with Kokoro.", story_id, reason)
-        kokoro_voices = assign_voices("kokoro", character_ids, str(story_id))
+        kokoro_voices = with_guest_voices(
+            "kokoro", assign_voices("kokoro", character_ids, str(story_id)), guests, str(story_id)
+        )
         try:
             return await self._narrator.narrate(scene_lines(lines, kokoro_voices), "kokoro")
         except TTSUnavailableError as exc:

@@ -68,7 +68,8 @@ written up in [`docs/release-v2.md`](docs/release-v2.md).
 - **Validated story contract** (Pydantic):
   - 5–6 scenes, 30–120 words each;
   - Flesch-Kincaid grade ≤ 4;
-  - every speaker is a declared character.
+  - every speaker is a declared character, or one of at most 2 undeclared guests (a one-line owl) who
+    appear in at most 2 scenes and get their own voice but no fixed look.
 - **One repair call** to `openai/gpt-oss-120b` if validation fails, with specific advice (e.g. *"Add 4 more short sentences to it"*). If it still fails, the story fails with a clean error.
 - **Async job flow:**
   - `POST /v1/stories` returns `202 {story_id, job_id}`.

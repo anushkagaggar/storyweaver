@@ -557,20 +557,27 @@ Every version follows the **release process in §11**. Each version lists **buil
 - [ ] **Start the synthetic data generator** (§7), running daily, quota-paced.
 
 **Carried over from V2** (deferred deliberately; see `docs/release-v2.md` for how each was found)
-- [ ] **Make `TTS_ENGINE=auto` usable again.** Re-examined 15 Nov 2026: `TTS_MAX_WAIT_SECONDS` applies
-      *per chunk* (`_pace` resets per `synthesize` call) and a rolling 60 s window never makes one chunk
-      wait that long, so pacing does not defer scenes. A simulated 5-scene story (6 requests a scene) paces
-      to 0 / 40 / 80 / 125 / 170 s: ~40 s a page, set by Orpheus's 9 requests a minute. The "nothing after
-      five minutes" seen on 14 Nov was most likely the wrong B2 credentials (upload failed, scene redone).
-      `TTS_ENGINE=kokoro` was removed from the Space and the compose default to confirm this live.
+- [x] **Make `TTS_ENGINE=auto` usable again.** Confirmed live 15 Nov 2026: a 5-scene story's audio was
+      ready at +5 / 16 / 49 / 85 / 114 s after its text, with 5–7 s pacing waits and no deferral. No code
+      change was needed: `TTS_MAX_WAIT_SECONDS` applies *per chunk* (`_pace` resets per `synthesize` call)
+      and a rolling 60 s window never makes one chunk wait that long. The "nothing after five minutes" seen
+      on 14 Nov was most likely the wrong B2 credentials (upload failed, scene redone). `TTS_ENGINE=kokoro`
+      is removed from the Space and from the compose default.
+- [ ] **The two safeguard checks don't fit in one minute.** `gpt-oss-safeguard-20b` allows 1,800 tokens a
+      minute after the margin; the input check (~900) and the output check (~1,500) exceed that, so the
+      `plan` job was deferred 22 s + 49 s live (71 of the 76 s from idea to text). This blocks the "first
+      page ≤ 15 s" exit criterion more than images do. Likely fix: a shorter policy prompt.
 - [ ] **Pacing blocks the single worker.** A `tts` job sleeping in `_pace()` holds the only worker slot,
       so other stories' `plan` jobs and V3's `image` jobs wait behind it. Give job kinds separate lanes
       (or let pacing yield) when image jobs land.
 - [ ] **Distinguish "quota exhausted" from "rate limited" in `tts_busy`.** A quota-exhausted narration reads
       "try again shortly" next to a `Retry-After` of ~14 hours (correct for a daily window). The same wording
       will be needed when the ZeroGPU image quota runs out, so fix it alongside the V3 placeholder message.
-- [ ] **Side characters who speak but aren't declared** (owl, fish, teacher) cause planner repairs; a prompt
-      tweak would fix it. Open since V1.1, and it also affects which characters need a visual description.
+- [x] **Side characters who speak but aren't declared** (owl, fish, teacher) cause planner repairs. Done
+      15 Nov 2026 as *guests*: up to 2 undeclared speakers, each in at most 2 scenes, with their own voice
+      (`with_guest_voices`) but no fixed look; loose references ("Pip") resolve to the declared id first.
+      Measured with `backend/scripts/measure_planner.py` on 15 side-character ideas: repairs 1 → 0 (the
+      baseline's one was a fish in 3 scenes, which would still be repaired); 1 story used a guest.
 
 **Learn:** diffusion, VRAM management, async orchestration, caching, GPU as a scarce resource.
 

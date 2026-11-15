@@ -7,7 +7,7 @@ mix engines.)
 """
 
 import hashlib
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
 from storyweaver.domain.story import NARRATOR
@@ -55,18 +55,40 @@ def voice(engine: EngineName, voice_id: str) -> Voice:
     raise KeyError(f"Unknown {engine} voice {voice_id!r}")
 
 
+def _pool(engine: EngineName, story_key: str) -> list[str]:
+    """The engine's non-narrator voices in a story-specific, deterministic order."""
+    narrator = NARRATOR_VOICE[engine]
+    return sorted(
+        (v.id for v in CATALOGUE[engine] if v.id != narrator),
+        key=lambda vid: hashlib.sha256(f"{story_key}:{vid}".encode()).hexdigest(),
+    )
+
+
 def assign_voices(engine: EngineName, character_ids: Iterable[str], story_key: str) -> dict[str, str]:
     """{speaker: voice id} for the narrator and every character.
 
     Characters get distinct voices while the pool lasts (5 for Orpheus, 8 for Kokoro; stories have at most
     6 characters), then voices repeat.
     """
-    narrator = NARRATOR_VOICE[engine]
-    pool = sorted(
-        (v.id for v in CATALOGUE[engine] if v.id != narrator),
-        key=lambda vid: hashlib.sha256(f"{story_key}:{vid}".encode()).hexdigest(),
-    )
-    voices = {NARRATOR: narrator}
+    pool = _pool(engine, story_key)
+    voices = {NARRATOR: NARRATOR_VOICE[engine]}
     for index, character_id in enumerate(sorted(set(character_ids))):
         voices[character_id] = pool[index % len(pool)]
     return voices
+
+
+def with_guest_voices(
+    engine: EngineName, voices: Mapping[str, str], guests: Iterable[str], story_key: str
+) -> dict[str, str]:
+    """`voices` plus a voice for each guest (an undeclared speaker), preferring voices nobody uses yet.
+
+    Computed from the whole story's guests, so a guest keeps its voice on every page without being stored.
+    With 3 main characters Orpheus has exactly 2 voices left, one per allowed guest; beyond that they repeat.
+    """
+    result = dict(voices)
+    used = set(result.values())
+    pool = _pool(engine, story_key)
+    free = [vid for vid in pool if vid not in used] or pool
+    for index, guest in enumerate(sorted(set(guests) - set(result))):
+        result[guest] = free[index % len(free)]
+    return result
