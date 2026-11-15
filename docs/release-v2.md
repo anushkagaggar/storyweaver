@@ -116,25 +116,8 @@ Step 4 is the half that is easy to miss: when a request *names* an Orpheus voice
 of quietly substituting a Kokoro one. Mid-story that would change a character's voice, so the engine is
 chosen once per story and a named voice is never silently swapped (plan §6.3).
 
-## Open follow-ups from V2
-
-**1. On `auto`, a story takes many minutes to narrate.** Orpheus allows 9 requests a minute (10 before the
-margin), and a scene is split into ≤ 200-character chunks, so a 5-scene story is 10–20 requests that
-`_pace()` in `routing/tts.py` spaces out. Observed live on 14 Nov 2026: repeated
-`Pacing Orpheus: waiting 6 s for the per-minute limit` and no finished scene after five minutes.
-
-Nothing is broken here — when the accumulated wait would pass `TTS_MAX_WAIT_SECONDS` (120 s), `_speak()`
-raises `DeferJobError`, so the scene is **deferred and retried later rather than failed**, and a deferral
-does not use up an attempt. It is a latency problem, not a correctness one. Worth considering: scale the
-wait budget with the number of chunks a scene needs instead of one flat number for scenes of any length.
-Until then `TTS_ENGINE=kokoro` on the Space sidesteps pacing entirely.
-
-(The scene failures seen that day were **not** pacing: they were the B2 credentials, below.)
-
-**2. `tts_busy` wording.** A quota-exhausted narration reads "That voice is busy right now. Please try
-again shortly" while `Retry-After` is ~14 hours (correct for a daily window). The useful advice, "or choose
-another voice", is there, but a quota-exhausted message distinct from the rate-limited one would read
-better.
+Two things this release left undone — Orpheus pacing latency on `auto`, and the `tts_busy` wording —
+are carried into **V3's task list in [`plan.md`](../plan.md) §10**, which is where work to do belongs.
 
 ## Release history, and two failures worth keeping
 

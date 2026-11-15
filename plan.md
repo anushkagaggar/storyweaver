@@ -556,6 +556,19 @@ Every version follows the **release process in §11**. Each version lists **buil
 - [ ] MCP: `illustrate`.
 - [ ] **Start the synthetic data generator** (§7), running daily, quota-paced.
 
+**Carried over from V2** (deferred deliberately; see `docs/release-v2.md` for how each was found)
+- [ ] **Make `TTS_ENGINE=auto` usable again.** Orpheus allows 9 requests/minute and a scene is split into
+      ≤ 200-character chunks, so a 5-scene story is 10–20 paced requests and takes many minutes. Exceeding
+      the flat `TTS_MAX_WAIT_SECONDS` (120 s) *defers* the scene rather than failing it, so this is latency,
+      not a defect. Scale the wait budget with a scene's chunk count instead of one flat number, then remove
+      the `TTS_ENGINE=kokoro` Variable from the Space. Matters for V3 because image jobs will compete for
+      the same worker and GPU minutes.
+- [ ] **Distinguish "quota exhausted" from "rate limited" in `tts_busy`.** A quota-exhausted narration reads
+      "try again shortly" next to a `Retry-After` of ~14 hours (correct for a daily window). The same wording
+      will be needed when the ZeroGPU image quota runs out, so fix it alongside the V3 placeholder message.
+- [ ] **Side characters who speak but aren't declared** (owl, fish, teacher) cause planner repairs; a prompt
+      tweak would fix it. Open since V1.1, and it also affects which characters need a visual description.
+
 **Learn:** diffusion, VRAM management, async orchestration, caching, GPU as a scarce resource.
 
 **Exit criteria:**
