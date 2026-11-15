@@ -72,6 +72,21 @@ async def test_orpheus_characters_are_paced_per_minute() -> None:
     assert sleep.waits
 
 
+async def test_a_whole_story_paces_through_orpheus_without_giving_up() -> None:
+    # The wait budget is per chunk and a rolling minute never blocks one chunk for 120 s, so a sequential
+    # worker narrates a full story without deferring a scene: about 40 s a page at 9 requests a minute.
+    orpheus = FakeTTS("orpheus")
+    router, sleep = make_router(orpheus, FakeTTS("kokoro"))
+    lines = [SENTENCE * 3, "Hello, fox!", SENTENCE, "Will you be my friend?", SENTENCE * 2, "Yes."]
+    assert await router.choose(lines * 5) == "orpheus"
+    for _ in range(5):
+        for line in lines:
+            await router.synthesize("orpheus", line, "hannah")
+    assert len(orpheus.calls) == 30
+    assert max(sleep.waits) < 60
+    assert 120 < sum(sleep.waits) < 240
+
+
 async def test_pacing_gives_up_after_the_max_wait() -> None:
     router, _ = make_router(FakeTTS("orpheus"), FakeTTS("kokoro"), max_wait=0)
     for _ in range(9):

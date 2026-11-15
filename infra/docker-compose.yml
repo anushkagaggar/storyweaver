@@ -15,9 +15,10 @@ services:
       S3_PUBLIC_ENDPOINT_URL: http://localhost:8333
       S3_BUCKET: storyweaver-audio
       S3_CREATE_BUCKET: "true"
-      # Kokoro by default: local and production share one Groq organisation, and Orpheus's free tier is
-      # about one story a day. Set TTS_ENGINE=auto in .env to try Orpheus locally.
-      TTS_ENGINE: ${TTS_ENGINE:-kokoro}
+      # auto, as on the Space: Orpheus while its quota lasts, then Kokoro. Local and production share one
+      # Groq organisation (about one Orpheus story a day between them) but not one Redis, so local runs
+      # can use up production's Orpheus quota; set TTS_ENGINE=kokoro in .env to keep them off it.
+      TTS_ENGINE: ${TTS_ENGINE:-auto}
       # Kokoro's ONNX files live in the mounted HF cache on D:, so rebuilds don't re-download them.
       KOKORO_DIR: /home/app/.cache/huggingface/storyweaver-kokoro
     ports:

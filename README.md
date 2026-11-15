@@ -523,7 +523,7 @@ docker run --rm -v "<frontend dir>:/w" -w /w node:24-alpine \
 | `S3_ENDPOINT_URL`, `S3_REGION`, `S3_BUCKET` | Space **Variables**, `.env` | Narration audio store. For B2 the region is the middle segment of the endpoint (`s3.<region>.backblazeb2.com`), not an AWS region; a scheme-less endpoint is accepted and normalised to `https://` |
 | `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | Space **Secrets**, `.env` | B2 application key, scoped to the one bucket, Read and Write. Locally these are the SeaweedFS credentials instead |
 | `STT_ENGINE` | optional | `groq` (default) or `local` to keep voice processing on the Space |
-| `TTS_ENGINE` | optional | `auto` (default: Orpheus while quota lasts, else Kokoro), or force `orpheus` / `kokoro`. Set to `kokoro` on the Space and in the local stack, because Orpheus's free tier is about one story a day |
+| `TTS_ENGINE` | optional | `auto` (default: Orpheus while quota lasts, else Kokoro), or force `orpheus` / `kokoro`. Unset (`auto`) on the Space and in the local stack; Orpheus's free tier is about one story a day, and a story takes ~3 min to narrate on it (~40 s a page) |
 | `STORY_RETENTION_DAYS` | optional | Delete stories and their audio this many days after creation (default 30; `0` keeps them) |
 | `POSTGRES_PASSWORD` | `.env` | Local Docker stack |
 

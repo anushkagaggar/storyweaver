@@ -52,10 +52,11 @@ Space → Settings → **Variables and secrets**. Variables are public, so crede
 | everything from V1 | unchanged | `DATABASE_URL`, `REDIS_URL`, `STORYWEAVER_API_KEY`, `GROQ_API_KEY`, `APP_ENV`, `ALLOWED_ORIGINS` |
 
 `TTS_ENGINE` was initially left unset on the Space, so it stayed `auto`: Orpheus while its daily quota
-lasts, then Kokoro. **Since 15 Nov 2026 it is set to `kokoro`** (Variable), because `auto` made narration
-take many minutes per story — see the pacing follow-up below. Removing the Variable restores the nicer
-Orpheus voice at that cost. The local Docker stack defaults it to `kokoro` too, because local and
-production share one Groq organisation and Orpheus's free tier is about one story a day.
+lasts, then Kokoro. On 15 Nov 2026 it was briefly set to `kokoro` because `auto` seemed to take many
+minutes per story; the same day it was removed again, on both the Space and the local stack, to measure
+the real Orpheus latency (V3 task list in `plan.md`). Local and production share one Groq organisation,
+so local `auto` runs draw on the same ~one-story-a-day Orpheus quota; `TTS_ENGINE=kokoro` in `.env`
+keeps local runs off it.
 
 Saving a secret restarts the Space. Until the `v2.*` tag is deployed it runs V1 and ignores them.
 
