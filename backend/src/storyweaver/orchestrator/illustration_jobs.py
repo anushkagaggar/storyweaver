@@ -17,6 +17,7 @@ once is not stuck with it: the same settings asked for again later still generat
 """
 
 import logging
+import time
 import uuid
 from dataclasses import dataclass
 from typing import Protocol
@@ -32,6 +33,7 @@ from storyweaver.imaging.generator import (
 from storyweaver.imaging.params import GenerationParams, cache_key
 from storyweaver.imaging.placeholder import PlaceholderImage
 from storyweaver.jobs.worker import JobContext, PermanentJobError, RetryableJobError
+from storyweaver.routing.limits import GpuBudget, LimitExceededError
 from storyweaver.storage.blob import BlobError, BlobStore, image_key, placeholder_image_key
 from storyweaver.storage.models import CharacterRow, ImageStatus, SceneRow, StoryRow, StoryStatus
 from storyweaver.storage.repositories import StoryRepository
@@ -118,11 +120,16 @@ class IllustrateSceneJob:
         blobs: BlobStore,
         settings: ImageSettings,
         illustrator: Illustrator | None = None,
+        *,
+        gpu_budget: GpuBudget | None = None,
+        gpu_seconds_per_image: float = 12.0,
     ) -> None:
         self._sessions = sessions
         self._blobs = blobs
         self._settings = settings
         self._illustrator = illustrator
+        self._gpu_budget = gpu_budget
+        self._gpu_seconds_per_image = gpu_seconds_per_image
         self._placeholder = PlaceholderImage()
 
     async def __call__(self, context: JobContext) -> None:
@@ -157,7 +164,7 @@ class IllustrateSceneJob:
             if await self._blobs.exists(key):
                 logger.info("Story %s scene %d: image already stored; reusing it.", story_id, idx)
                 return key, ImageStatus.READY
-            await self._illustrator.illustrate(story_id, params, key)
+            await self._illustrate_within_budget(story_id, params, key)
             return key, ImageStatus.READY
         except BlobError as exc:
             raise RetryableJobError(str(exc)) from exc
@@ -172,6 +179,30 @@ class IllustrateSceneJob:
                 "Story %s scene %d: %s on the last attempt; using the placeholder.", story_id, idx, exc
             )
         return await self._make_placeholder(story_id, idx, params), ImageStatus.PLACEHOLDER
+
+    async def _illustrate_within_budget(
+        self, story_id: uuid.UUID, params: GenerationParams, key: str
+    ) -> None:
+        """Book GPU-seconds before the call and settle the real time after; no budget means placeholder."""
+        assert self._illustrator is not None  # noqa: S101  # checked by the caller
+        if self._gpu_budget is None:
+            await self._illustrator.illustrate(story_id, params, key)
+            return
+        try:
+            reservation = await self._gpu_budget.reserve(self._gpu_seconds_per_image)
+        except LimitExceededError as exc:
+            raise ImageQuotaExhaustedError(exc.retry_after_seconds, "daily GPU budget used up") from exc
+        started = time.monotonic()
+        used: float | None = None
+        try:
+            await self._illustrator.illustrate(story_id, params, key)
+        except ImageQuotaExhaustedError:
+            used = 0  # ZeroGPU refused it before running
+            raise
+        finally:
+            # Wall time over-counts a little (queueing, upload), which errs on the safe side. A timeout
+            # or failure is charged too: the GPU may have run.
+            await self._gpu_budget.settle(reservation, time.monotonic() - started if used is None else used)
 
     async def _make_placeholder(self, story_id: uuid.UUID, idx: int, params: GenerationParams) -> str:
         key = placeholder_image_key(story_id, idx)

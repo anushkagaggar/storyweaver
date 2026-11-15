@@ -12,6 +12,14 @@ function badRequest(detail: string): Response {
   );
 }
 
+/** The visitor's IP: Vercel's x-real-ip, else the first x-forwarded-for hop. Undefined locally without a proxy. */
+function clientIp(request: Request): string | undefined {
+  const real = request.headers.get("x-real-ip")?.trim();
+  if (real) return real.slice(0, 64);
+  const first = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+  return first ? first.slice(0, 64) : undefined;
+}
+
 /** POST /api/stories -> backend POST /v1/stories. Only the fields the API accepts are forwarded. */
 export async function POST(request: Request): Promise<Response> {
   let body: unknown;
@@ -29,6 +37,10 @@ export async function POST(request: Request): Promise<Response> {
   const key = request.headers.get("idempotency-key");
   const headers: Record<string, string> = {};
   if (key && IDEMPOTENCY_KEY.test(key)) headers["Idempotency-Key"] = key;
+  // The backend limits stories per visitor (backend routing/limits.py) and trusts this header because only
+  // this server holds the API key. Vercel sets x-forwarded-for itself, so a browser can't spoof it there.
+  const ip = clientIp(request);
+  if (ip) headers["X-Client-IP"] = ip;
 
   return forwardToBackend("/v1/stories", {
     method: "POST",

@@ -26,6 +26,8 @@ from storyweaver.orchestrator.illustration_jobs import (
     LocalIllustrator,
 )
 from storyweaver.orchestrator.story_service import PlanStoryJob, StoryService, make_story_failure_hook
+from storyweaver.routing.limits import GpuBudget
+from storyweaver.routing.store import InMemoryQuotaStore
 from storyweaver.safety.guards import SafetyVerdict
 from storyweaver.storage.blob import InMemoryBlobStore, image_key
 from storyweaver.storage.db import create_engine, create_session_factory
@@ -206,6 +208,24 @@ async def test_no_gpu_budget_uses_the_placeholder_at_once(
     assert (await _image_jobs(db))[0].status == JobStatus.SUCCEEDED  # no retries spent on a dead quota
     # The placeholder is not stored under the real image's key, so a later request can still make it.
     assert image_key(story_id, cache_key(generator.calls[0])) not in blobs.objects
+
+
+async def test_when_the_daily_gpu_budget_is_spent_pages_get_the_placeholder(
+    client: TestClient, db: Sessions, blobs: InMemoryBlobStore
+) -> None:
+    generator = FakeGenerator()
+    worker = _worker(db, blobs, generator)
+    budget = GpuBudget(InMemoryQuotaStore(), seconds_per_day=20)
+    worker._handlers[JobKind.IMAGE] = IllustrateSceneJob(  # type: ignore[attr-defined]
+        db, blobs, SETTINGS, LocalIllustrator(generator, blobs), gpu_budget=budget, gpu_seconds_per_image=12
+    )
+    await budget.reserve(15)  # earlier stories used 15 of today's 20 GPU-seconds: one more image won't fit
+    story_id = await _plan(client, worker)
+    while await worker.run_once():
+        pass
+
+    assert generator.calls == []  # no GPU call was made
+    assert {s["image_status"] for s in _story(client, story_id)["scenes"]} == {"placeholder"}
 
 
 async def test_a_flaky_gpu_is_retried_then_the_placeholder_stands_in(

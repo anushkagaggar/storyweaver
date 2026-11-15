@@ -3,7 +3,7 @@
 import { deleteMessage, parseRetryAfter, problemMessage, transcribeMessage } from "@/lib/story-logic";
 import type { CreateStoryResponse, Problem, SceneChoice, Story, Transcript } from "@/lib/story-types";
 
-export type Failure = { ok: false; message: string; status: number; retryAfter: number | null };
+export type Failure = { ok: false; message: string; status: number; retryAfter: number | null; code?: string };
 export type Result<T> = { ok: true; value: T } | Failure;
 
 async function failure(response: Response): Promise<Failure> {
@@ -14,7 +14,7 @@ async function failure(response: Response): Promise<Failure> {
     // Non-JSON error body: fall back to the status code.
   }
   const retryAfter = parseRetryAfter(response.headers.get("retry-after"));
-  return { ok: false, message: problemMessage(problem, retryAfter), status: response.status, retryAfter };
+  return { ok: false, message: problemMessage(problem, retryAfter), status: response.status, retryAfter, code: problem.code };
 }
 
 export async function createStory(

@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { DeleteStory } from "@/components/DeleteStory";
 import { StoryBook } from "@/components/StoryBook";
 import { fetchStory } from "@/lib/story-client";
-import { FINAL_STATUSES, hasPendingAudio, mergeAudioUrls, pollDelayMs, statusHint, statusMessage } from "@/lib/story-logic";
+import { FINAL_STATUSES, hasPendingMedia, mergeMediaUrls, pollDelayMs, statusHint, statusMessage } from "@/lib/story-logic";
 import type { Story } from "@/lib/story-types";
 
 type View =
@@ -15,12 +15,12 @@ type View =
   | { kind: "error"; message: string; final: boolean }
   | { kind: "deleted" };
 
-// Narration finishes after the text, so a ready story is polled a while longer (about 10 minutes at most).
-const MAX_AUDIO_POLLS = 120;
+// Narration and pictures finish after the text, so a ready story is polled a while longer (about 10 minutes at most).
+const MAX_MEDIA_POLLS = 120;
 
 /**
  * Polls /api/stories/{id} (plan §6.4: every 1.5 s with backoff) until the story is ready or failed, then keeps
- * polling until every page's narration has arrived.
+ * polling until every page's narration and picture has arrived.
  */
 export function StoryViewer({ id }: { id: string }) {
   const [view, setView] = useState<View>({ kind: "loading" });
@@ -36,10 +36,10 @@ export function StoryViewer({ id }: { id: string }) {
       const result = await fetchStory(id);
       if (cancelled || deleted.current) return;
       if (result.ok) {
-        const story = mergeAudioUrls(latest.current, result.value);
+        const story = mergeMediaUrls(latest.current, result.value);
         latest.current = story;
         setView({ kind: "story", story });
-        if (FINAL_STATUSES.has(story.status) && !(hasPendingAudio(story) && attempt < MAX_AUDIO_POLLS)) return;
+        if (FINAL_STATUSES.has(story.status) && !(hasPendingMedia(story) && attempt < MAX_MEDIA_POLLS)) return;
       } else {
         const final = result.status === 404;
         setView({ kind: "error", message: result.message, final });
@@ -64,7 +64,7 @@ export function StoryViewer({ id }: { id: string }) {
     return (
       <div className="story-status" role="status">
         <h1>Story deleted</h1>
-        <p>The story, its pages and its reading voice are gone for good.</p>
+        <p>The story, its pages, its pictures and its reading voice are gone for good.</p>
         <Link href="/">Make a new story</Link>
       </div>
     );

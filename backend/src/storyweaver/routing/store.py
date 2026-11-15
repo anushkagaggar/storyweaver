@@ -26,6 +26,7 @@ class Usage:
     requests: int = 0
     tokens: int = 0
     audio_seconds: int = 0
+    gpu_seconds: int = 0
 
     def amount(self, limit: Limit) -> int:
         return int(getattr(self, limit.unit))

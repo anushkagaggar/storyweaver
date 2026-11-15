@@ -7,7 +7,7 @@ Source of truth: docs/groq-limits.md (docs table, confirmed against this account
 from dataclasses import dataclass
 from typing import Literal
 
-Unit = Literal["requests", "tokens", "audio_seconds"]
+Unit = Literal["requests", "tokens", "audio_seconds", "gpu_seconds"]
 
 MINUTE = 60
 HOUR = 3600

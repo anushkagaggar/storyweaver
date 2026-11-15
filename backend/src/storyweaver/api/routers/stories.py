@@ -25,6 +25,7 @@ from storyweaver.orchestrator.story_service import (
     SafetyUnavailableError,
     UnsafeInputError,
 )
+from storyweaver.routing.limits import LimitExceededError
 from storyweaver.safety.guards import BRANDS
 from storyweaver.storage.blob import BlobError, BlobStore
 from storyweaver.storage.models import ImageStatus, SceneRow, SceneStatus, StoryRow, StoryStatus
@@ -90,6 +91,12 @@ ADAPTATION_NOTICES = {
 }
 
 
+VISITOR_LIMIT_MESSAGES = {
+    "hour": "You've made lots of stories this hour! Please come back in a little while for more.",
+    "day": "That's all the stories for today. Please come back tomorrow for more.",
+}
+
+
 class StoryError(BaseModel):
     code: str
     detail: str | None
@@ -147,6 +154,16 @@ async def create_story(
             age_band=body.age_band,
             num_scenes=body.num_scenes,
             idempotency_key=idempotency_key,
+            # Set by the Vercel route handler, the only holder of the API key (routing/limits.py).
+            client_ip=request.headers.get("x-client-ip"),
+        )
+    except LimitExceededError as exc:
+        return problem_response(
+            request,
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            VISITOR_LIMIT_MESSAGES[exc.window],
+            headers={"Retry-After": str(max(1, round(exc.retry_after_seconds)))},
+            extra={"code": "visitor_limit", "window": exc.window},
         )
     except UnsafeInputError as exc:
         verdict = exc.verdict

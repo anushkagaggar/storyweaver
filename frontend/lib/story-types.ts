@@ -8,7 +8,10 @@ export type Scene = {
   idx: number;
   text: string;
   lines: Line[];
+  /** Presigned PNG link (same lifetime as audio_url); set for "ready" and "placeholder". */
   image_url: string | null;
+  /** "placeholder": no picture could be drawn today, so a soft wordless one stands in. "none": no pictures. */
+  image_status: ImageStatus;
   /** Presigned MP3 link, valid for about an hour. */
   audio_url: string | null;
   /** "pending" while the page's narration is being made; "none" when the story has no narration. */
@@ -16,6 +19,8 @@ export type Scene = {
 };
 
 export type AudioStatus = "none" | "pending" | "ready" | "failed";
+
+export type ImageStatus = "none" | "pending" | "ready" | "placeholder" | "failed";
 
 export type Character = { id: string; name: string; species: string; visual: string };
 

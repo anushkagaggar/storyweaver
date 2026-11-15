@@ -2,10 +2,10 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import { audioNote } from "@/lib/story-logic";
+import { audioNote, imageNote } from "@/lib/story-logic";
 import type { Story } from "@/lib/story-types";
 
-/** One scene per page with previous/next buttons, keyboard arrows and a reading-voice player (pictures: V3). */
+/** One scene per page: its picture, its text and a reading-voice player, with previous/next buttons and arrows. */
 export function StoryBook({ story }: { story: Story }) {
   const [page, setPage] = useState(0);
   const last = story.scenes.length - 1;
@@ -31,6 +31,7 @@ export function StoryBook({ story }: { story: Story }) {
   const scene = story.scenes.at(page);
   if (!scene) return null;
   const note = audioNote(scene);
+  const picture = imageNote(scene);
   const next = story.scenes.at(page + 1);
 
   return (
@@ -44,6 +45,24 @@ export function StoryBook({ story }: { story: Story }) {
         <p className="page-number">
           Page {page + 1} of {last + 1}
         </p>
+        {scene.image_url ? (
+          // Presigned, short-lived URLs from our own bucket: next/image's optimiser would add nothing here.
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            key={scene.image_url}
+            className={scene.image_status === "placeholder" ? "page-image placeholder" : "page-image"}
+            src={scene.image_url}
+            // The picture shows what the text says; a placeholder is decorative.
+            alt={scene.image_status === "placeholder" ? "" : `Picture for page ${page + 1}`}
+          />
+        ) : (
+          scene.image_status === "pending" && <div className="page-image drawing" aria-hidden="true" />
+        )}
+        {picture && (
+          <p className="hint image-note" role="status">
+            {picture}
+          </p>
+        )}
         <p className="page-text">{scene.text}</p>
         {scene.audio_url ? (
           // Browsers only let audio start after a tap, so page 1 waits for Play; later pages continue by themselves.

@@ -22,12 +22,15 @@ accounts. It is **not offered to the public**. If that changes, this DPIA must b
 | Story idea (≤ 500 chars) | Typed, or transcript | Safety check, story planning | Yes, `stories.prompt_text` in Neon, up to 30 days (or until deleted) | Groq (Prompt Guard, safeguard, planner) |
 | Story text, characters | Generated | Show the story; second safety check | Yes, Neon | Groq (safeguard check) |
 | Narration audio (MP3 per page) | Generated from story text | Playback | Yes, private Backblaze B2 bucket, keyed by story id | Groq Orpheus (text in, audio out) or Kokoro on the Space; B2 stores the result |
+| Page pictures (PNG per page) | Generated from the scene's image prompt | Show the page | Yes, the same private B2 bucket, under the story's prefix, so deletion and the 30-day expiry remove them | Generated on the Space (placeholder on CPU; GPU models from V3 steps 3-4); B2 stores the result |
 | Quota counters | System | Stay inside free-tier limits | Redis, minutes to a day | Upstash. No content |
+| Per-visitor story counters (V3) | The visitor's IP, forwarded by the Vercel route handler as `X-Client-IP` | Stop one visitor using up the shared Groq and GPU quota (5 stories an hour, 15 a day) | Redis, keyed by an HMAC-SHA256 of the IP with the API key as secret (not reversible by hashing every IPv4 address); counters expire within a day. The IP itself is never stored or logged | Upstash. No content |
 | Request logs | System | Operations | Platform logs (Vercel, Hugging Face) and app logs | Our code logs job ids, story ids, status and error classes. It does not log ideas, transcripts, story text or audio (checked 13 Nov 2026 by reading every logging call) |
 | Traces | System | Debugging | Only if Langfuse keys are set; metadata only unless `LANGFUSE_CAPTURE_CONTENT=true` | Langfuse |
 
 **Not collected:** names, emails, accounts, cookies, analytics, IP addresses (beyond what Vercel and Hugging
-Face log as infrastructure), children's own voices by design (the parent records the idea).
+Face log as infrastructure; our own counters hold only a keyed hash, above), children's own voices by design
+(the parent records the idea).
 
 **Access control.** There are no user accounts. A story is readable by anyone with its UUID link (a capability
 URL; random v4 UUIDs). The browser never holds the backend API key: only Vercel server code calls the backend.

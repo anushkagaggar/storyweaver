@@ -54,6 +54,9 @@ export function problemMessage(problem: Problem, retryAfterSeconds: number | nul
   if (problem.code === "unsafe_input") {
     return problem.detail ?? "This story idea can't be used. Try a gentle, kind idea.";
   }
+  if (problem.code === "visitor_limit") {
+    return problem.detail ?? "You've made lots of stories! Please come back a little later for more.";
+  }
   switch (problem.status) {
     case 422:
       return "Please check your story idea and try again.";
@@ -76,10 +79,17 @@ const MAX_BUSY_WAIT_SECONDS = 90;
 /**
  * Seconds to wait before resubmitting automatically, or null when the parent should decide.
  * Only "busy" answers qualify (429 quota, 503 safety check briefly unavailable); a refused or invalid idea never
- * does. One second is added to Retry-After so the per-minute window has really moved on.
+ * does, and neither does this visitor's own story limit (an hour or a day away). One second is added to
+ * Retry-After so the per-minute window has really moved on.
  */
-export function autoRetryDelaySeconds(status: number, retryAfterSeconds: number | null, retriesSoFar: number): number | null {
+export function autoRetryDelaySeconds(
+  status: number,
+  retryAfterSeconds: number | null,
+  retriesSoFar: number,
+  code?: string,
+): number | null {
   if (status !== 429 && status !== 503) return null;
+  if (code === "visitor_limit") return null;
   if (retriesSoFar >= MAX_AUTO_RETRIES) return null;
   const wait = retryAfterSeconds && retryAfterSeconds > 0 ? retryAfterSeconds + 1 : DEFAULT_BUSY_WAIT_SECONDS;
   return Math.min(wait, MAX_BUSY_WAIT_SECONDS);
@@ -99,28 +109,42 @@ export function parseRetryAfter(value: string | null): number | null {
 
 export const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** True while any page's narration is still being made, so the viewer keeps polling after the text appears. */
-export function hasPendingAudio(story: Story): boolean {
-  return story.status === "ready" && story.scenes.some((scene) => scene.audio_status === "pending");
+/** True while any page's narration or picture is still being made, so the viewer keeps polling after the text. */
+export function hasPendingMedia(story: Story): boolean {
+  return (
+    story.status === "ready" &&
+    story.scenes.some((scene) => scene.audio_status === "pending" || scene.image_status === "pending")
+  );
 }
 
 /**
- * Each poll returns freshly signed audio URLs. Swapping the URL of a page that is already playing would restart
- * it, so a page that was ready keeps the URL it had.
+ * Each poll returns freshly signed URLs. Swapping the URL of a page that is already playing would restart it, and
+ * swapping a picture's would reload it, so a page keeps the URLs it had while their status stays the same.
  */
-export function mergeAudioUrls(previous: Story | null, next: Story): Story {
+export function mergeMediaUrls(previous: Story | null, next: Story): Story {
   if (!previous) return next;
-  const known = new Map<number, string>();
-  for (const scene of previous.scenes) {
-    if (scene.audio_status === "ready" && scene.audio_url) known.set(scene.idx, scene.audio_url);
-  }
+  const before = new Map(previous.scenes.map((scene) => [scene.idx, scene]));
   return {
     ...next,
     scenes: next.scenes.map((scene: Scene) => {
-      const url = known.get(scene.idx);
-      return scene.audio_status === "ready" && url ? { ...scene, audio_url: url } : scene;
+      const old = before.get(scene.idx);
+      if (!old) return scene;
+      const keepAudio = scene.audio_status === "ready" && old.audio_status === "ready" && old.audio_url;
+      const keepImage = scene.image_status === old.image_status && old.image_url && scene.image_url;
+      return {
+        ...scene,
+        ...(keepAudio ? { audio_url: old.audio_url } : {}),
+        ...(keepImage ? { image_url: old.image_url } : {}),
+      };
     }),
   };
+}
+
+/** What to say about a page's picture. Null when there's nothing to say (a real picture, or none at all). */
+export function imageNote(scene: Scene): string | null {
+  if (scene.image_status === "pending") return "Drawing the picture…";
+  if (scene.image_status === "placeholder") return "Our artist is resting today, so this page has a soft picture instead.";
+  return null;
 }
 
 /** What to show in place of the player for a page without playable audio. Null when there's nothing to say. */

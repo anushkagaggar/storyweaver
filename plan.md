@@ -549,9 +549,22 @@ Every version follows the **release process in §11**. Each version lists **buil
 - [ ] `SDXLZeroGPU` (`@spaces.GPU(duration=…)`) and `SD15Local` (6 GB: fp16, `enable_model_cpu_offload`, VAE tiling).
 - [ ] Character consistency (§6.5): visual string, seed, IP-Adapter reference from scene 1.
 - [ ] Florence-2 image self-check with up to 2 retries.
-- [ ] Pipeline ordering: scene 1 TTS and image first; the other scenes queued.
-- [ ] Content-addressed image cache: `sha256(prompt|seed|model|lora)` → R2 key.
-- [ ] `PlaceholderImage` fallback when the ZeroGPU quota is exhausted; UI message.
+- [x] Pipeline ordering: scene 1 TTS and image first; the other scenes queued. Done 15 Nov 2026: one `image`
+      job per scene, in its own worker lane (`plan`, `tts` and `image` lanes each claim only their kind).
+- [x] Content-addressed image cache. Done 15 Nov 2026, wider than planned: the key hashes *every* field of
+      `GenerationParams` (model and LoRA revisions, size, sampler, steps, guidance, IP-Adapter reference,
+      pipeline version), and lives in B2 under `stories/<id>/images/` so deletion and expiry stay complete
+      (seeds are per story, so a global cache would never hit). Each attempt checks the key first, so a retry
+      after a crash records the stored image instead of making it again.
+- [x] `PlaceholderImage` fallback when the ZeroGPU quota is exhausted; UI message. Done 15 Nov 2026, with
+      `IMAGE_ENGINE=placeholder` as the default until a GPU engine lands; never stored under a content key.
+- [x] **Our own limits** (added 15 Nov 2026: every visitor's GPU time is charged to one HF account).
+      `VisitorLimiter`: 5 stories an hour, 15 a day per visitor (keyed HMAC of the IP from `X-Client-IP`).
+      `GpuBudget`: 900 GPU-seconds a day across everyone, then placeholders. Wire `GpuBudget` into the
+      ZeroGPU illustrator in step 4.
+- [ ] **ZeroGPU from the worker (option b).** The worker calls the Space's own Gradio endpoint `illustrate`
+      over HTTP with an HF token (a new Space Secret), and the endpoint uploads the image before returning.
+      Spike first: confirm ZeroGPU accepts a call from inside the Space through its `*.hf.space` URL.
 - [ ] Speech → image path ("draw a purple dragon").
 - [ ] MCP: `illustrate`.
 - [ ] **Start the synthetic data generator** (§7), running daily, quota-paced.
@@ -567,9 +580,9 @@ Every version follows the **release process in §11**. Each version lists **buil
       minute after the margin; the input check (~900) and the output check (~1,500) exceed that, so the
       `plan` job was deferred 22 s + 49 s live (71 of the 76 s from idea to text). This blocks the "first
       page ≤ 15 s" exit criterion more than images do. Likely fix: a shorter policy prompt.
-- [ ] **Pacing blocks the single worker.** A `tts` job sleeping in `_pace()` holds the only worker slot,
-      so other stories' `plan` jobs and V3's `image` jobs wait behind it. Give job kinds separate lanes
-      (or let pacing yield) when image jobs land.
+- [x] **Pacing blocks the single worker.** Done 15 Nov 2026: one claim loop per job kind (worker lanes).
+      They share one event loop, so they stay independent only while no handler blocks it; CPU work runs
+      in threads and GPU work is an HTTP call. A test shows a plan job finishing while a tts job sleeps.
 - [ ] **Distinguish "quota exhausted" from "rate limited" in `tts_busy`.** A quota-exhausted narration reads
       "try again shortly" next to a `Retry-After` of ~14 hours (correct for a daily window). The same wording
       will be needed when the ZeroGPU image quota runs out, so fix it alongside the V3 placeholder message.

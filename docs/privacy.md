@@ -1,6 +1,6 @@
 # Privacy notice
 
-*Draft, 13 Nov 2026 (V2). The short in-app version is the `/privacy` page; keep the two in step. Written for the parent who uses StoryWeaver. It describes what the code does today; the
+*Draft, 13 Nov 2026 (V2); pictures and per-visitor limits added 15 Nov 2026 (V3). The short in-app version is the `/privacy` page; keep the two in step. Written for the parent who uses StoryWeaver. It describes what the code does today; the
 reasoning and the open risks are in [`dpia.md`](dpia.md).*
 
 StoryWeaver is a portfolio project run by one person. It is not a commercial service, has no accounts and is
@@ -15,7 +15,8 @@ anything else that identifies a real person.
 | **Your story idea** (typed, or the text from your voice) | Stored in our database (Neon, United States). Sent to Groq (United States) to check it is suitable for children and to write the story. | **Deleted automatically 30 days after the story was made**, or straight away when you press "Delete this story". |
 | **The story** (title, pages, characters) | Stored in our database. Sent to Groq to check it again before you see it, and to read it aloud when Groq's voice is used. | Same as the idea. |
 | **The reading voice** (one audio file per page) | Made by Groq's Orpheus voice (United States), or by a voice model running on our own server. Stored in a private bucket at Backblaze (United States). | Deleted with the story. Playback links expire after one hour. |
-| **Usage counts** | Upstash Redis (United States): numbers that keep us inside free usage limits. | Minutes to a day. They contain no text, audio or names. |
+| **The pictures** (one per page) | Drawn on our own story server, from the page's picture description. Stored in the same private Backblaze bucket. | Deleted with the story. Links expire after one hour. |
+| **Usage counts** | Upstash Redis (United States): numbers that keep us inside free usage limits, including how many stories each visitor has made. A visitor is counted under a scrambled code made from their internet address, which can't be turned back into the address. | Up to a day. They contain no text, audio, names or internet addresses. |
 
 We don't use your data to train any model. We don't sell it, show adverts or build profiles.
 
@@ -26,8 +27,8 @@ Don't share the address unless you want others to read the story. Stories aren't
 
 ## Deleting a story
 
-Every story page has a **"Delete this story"** button. It removes the idea, the pages and the reading voice for
-good. Like reading, anyone with the story's address can do this. A story that is still being made can be deleted
+Every story page has a **"Delete this story"** button. It removes the idea, the pages, the pictures and the
+reading voice for good. Like reading, anyone with the story's address can do this. A story that is still being made can be deleted
 once it is finished. Stories you don't delete are removed automatically **30 days** after they were made.
 
 ## Who else is involved
@@ -39,7 +40,7 @@ Every service below is a company in the United States, so your data leaves your 
   what we send, instead of its standard period of up to 30 days. See [Groq's data page](https://console.groq.com/docs/your-data).
 - **Vercel** hosts the website and **Hugging Face** hosts the story server. Their systems keep routine logs of
   requests (time, address, result). They don't keep what you said or typed on our behalf.
-- **Neon** (database), **Backblaze** (audio files) and **Upstash** (usage counts), as in the table.
+- **Neon** (database), **Backblaze** (audio and picture files) and **Upstash** (usage counts), as in the table.
 - **Langfuse** (a debugging tool) is off unless switched on. Even when on, it records timings and sizes, not
   your words, unless a setting that is off by default is turned on.
 

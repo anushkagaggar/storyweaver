@@ -20,8 +20,14 @@ export default function PrivacyPage() {
       <h2>Your story idea and the story</h2>
       <p>
         These are stored in our database (Neon, United States) for up to 30 days and sent to Groq to check they&apos;re suitable for children,
-        write the story and read it aloud. Reading-voice audio is kept in a private file store (Backblaze, United States);
-        links to it expire after an hour. Nothing is used to train a model, sold, or used for adverts.
+        write the story and read it aloud. Reading-voice audio and page pictures are kept in a private file store (Backblaze,
+        United States); links to them expire after an hour. Nothing is used to train a model, sold, or used for adverts.
+      </p>
+
+      <h2>Story limits</h2>
+      <p>
+        So everyone gets a turn, each visitor can make a few stories an hour and a day. We count them under a scrambled code
+        made from your internet address, which can&apos;t be turned back into the address, and forget the count within a day.
       </p>
 
       <h2>Who can read a story</h2>
@@ -35,8 +41,8 @@ export default function PrivacyPage() {
 
       <h2>Deleting a story</h2>
       <p>
-        Every story has a &ldquo;Delete this story&rdquo; button that removes the idea, the pages and the reading voice for
-        good. Stories you don&apos;t delete are removed automatically 30 days after they were made.
+        Every story has a &ldquo;Delete this story&rdquo; button that removes the idea, the pages, the pictures and the
+        reading voice for good. Stories you don&apos;t delete are removed automatically 30 days after they were made.
       </p>
 
       <h2>Not yet</h2>

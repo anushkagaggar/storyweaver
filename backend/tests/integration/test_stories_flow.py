@@ -18,7 +18,9 @@ from storyweaver.jobs.worker import Worker
 from storyweaver.llm.client import ChatMessage, LLMResult, LLMUnavailableError
 from storyweaver.llm.planner import StoryPlanner
 from storyweaver.orchestrator.story_service import PlanStoryJob, StoryService, make_story_failure_hook
+from storyweaver.routing.limits import VisitorLimiter
 from storyweaver.routing.router import QuotaExhaustedError
+from storyweaver.routing.store import InMemoryQuotaStore
 from storyweaver.safety.guards import SafetyCheckError, SafetyVerdict
 from storyweaver.storage.db import create_engine, create_session_factory
 from storyweaver.storage.models import JobKind, JobRow, JobStatus
@@ -280,6 +282,32 @@ async def test_brand_idea_is_adapted_and_the_reader_is_told(
     assert queued["notice"] is None  # shown with the story, never before the output check
     assert story["status"] == "ready"
     assert "made up our own characters" in story["notice"]
+
+
+def test_a_visitor_over_the_limit_gets_a_friendly_429(client: TestClient, input_guard: StubGuard) -> None:
+    services = client.app.state.services  # type: ignore[attr-defined]
+    limiter = VisitorLimiter(InMemoryQuotaStore(), per_hour=2, per_day=15, secret="s")
+    services.stories = StoryService(services.sessions, input_guard=input_guard, visitor_limiter=limiter)  # type: ignore[arg-type]
+    visitor = {**API_KEY, "X-Client-IP": "203.0.113.7"}
+
+    assert (
+        client.post(
+            "/v1/stories", json=BODY, headers={**visitor, "Idempotency-Key": "visit-0001"}
+        ).status_code
+        == 202
+    )
+    # Replaying the same request isn't a new story, so it isn't counted again.
+    replay = client.post("/v1/stories", json=BODY, headers={**visitor, "Idempotency-Key": "visit-0001"})
+    assert replay.headers["Idempotent-Replayed"] == "true"
+    assert client.post("/v1/stories", json=BODY, headers=visitor).status_code == 202
+    limited = client.post("/v1/stories", json=BODY, headers=visitor)
+
+    assert limited.status_code == 429
+    assert limited.headers["content-type"] == "application/problem+json"
+    assert int(limited.headers["Retry-After"]) > 0
+    assert limited.json()["code"] == "visitor_limit" and limited.json()["window"] == "hour"
+    other = {**API_KEY, "X-Client-IP": "198.51.100.2"}
+    assert client.post("/v1/stories", json=BODY, headers=other).status_code == 202
 
 
 async def test_ordinary_story_has_no_notice(client: TestClient, db: Sessions) -> None:

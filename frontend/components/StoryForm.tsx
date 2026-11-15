@@ -34,7 +34,7 @@ export function StoryForm() {
       return;
     }
     // The backend refuses busy ideas before storing anything, so resending the same Idempotency-Key is safe.
-    const wait = autoRetryDelaySeconds(result.status, result.retryAfter, autoRetries.current);
+    const wait = autoRetryDelaySeconds(result.status, result.retryAfter, autoRetries.current, result.code);
     if (wait !== null) {
       autoRetries.current += 1;
       busyMessage.current = result.message;

@@ -30,6 +30,7 @@ from storyweaver.llm.planner import PlanningError, StoryPlanner, StoryRequest
 from storyweaver.observability.tracing import trace_scope
 from storyweaver.orchestrator.illustration_jobs import mark_scene_image_failed
 from storyweaver.orchestrator.narration_jobs import StoryNarration, mark_scene_audio_failed
+from storyweaver.routing.limits import VisitorLimiter
 from storyweaver.routing.router import QuotaExhaustedError
 from storyweaver.safety.guards import (
     OUTPUT_REJECTED_MESSAGE,
@@ -78,9 +79,15 @@ def request_hash(prompt: str, age_band: AgeBand, num_scenes: SceneCount) -> str:
 
 
 class StoryService:
-    def __init__(self, sessions: async_sessionmaker[AsyncSession], input_guard: InputGuard | None) -> None:
+    def __init__(
+        self,
+        sessions: async_sessionmaker[AsyncSession],
+        input_guard: InputGuard | None,
+        visitor_limiter: VisitorLimiter | None = None,
+    ) -> None:
         self._sessions = sessions
         self._input_guard = input_guard
+        self._visitor_limiter = visitor_limiter
 
     async def create(
         self,
@@ -89,12 +96,17 @@ class StoryService:
         age_band: AgeBand,
         num_scenes: SceneCount,
         idempotency_key: str | None,
+        client_ip: str | None = None,
     ) -> AcceptedStory:
+        """Raises LimitExceededError when this visitor has made too many stories (counted before the safety
+        check, so rejected ideas count too: they cost Groq quota as well)."""
         digest = request_hash(prompt, age_band, num_scenes)
         if idempotency_key is not None:
             existing = await self._replay(idempotency_key, digest)
             if existing is not None:
-                return existing  # this exact request already passed the safety check
+                return existing  # this exact request already passed the safety check (and was counted)
+        if self._visitor_limiter is not None:
+            await self._visitor_limiter.acquire(client_ip)
         verdict = await self._check_input(prompt)
         try:
             async with self._sessions() as session, session.begin():

@@ -23,6 +23,7 @@ from storyweaver.orchestrator.narration import Narrator
 from storyweaver.orchestrator.narration_jobs import NarrateSceneJob, StoryNarration
 from storyweaver.orchestrator.story_deletion import RetentionSweeper, StoryDeletion
 from storyweaver.orchestrator.story_service import PlanStoryJob, StoryService, make_story_failure_hook
+from storyweaver.routing.limits import VisitorLimiter
 from storyweaver.routing.llm import RoutedLLM
 from storyweaver.routing.router import ModelRouter
 from storyweaver.routing.store import InMemoryQuotaStore, QuotaStore, RedisQuotaStore
@@ -128,7 +129,15 @@ def build_services(settings: Settings) -> Services:
         prompt_guard_threshold=settings.prompt_guard_threshold,
     )
     policy = PolicyChecker(llm, guard_models)
-    services.stories = StoryService(services.sessions, input_guard=InputGuard(llm, policy, guard_models))
+    visitor_limiter = VisitorLimiter(
+        store,
+        per_hour=settings.visitor_stories_per_hour,
+        per_day=settings.visitor_stories_per_day,
+        secret=settings.storyweaver_api_key.get_secret_value(),
+    )
+    services.stories = StoryService(
+        services.sessions, input_guard=InputGuard(llm, policy, guard_models), visitor_limiter=visitor_limiter
+    )
     planner = StoryPlanner(
         llm,
         planner_model=settings.planner_model_id,

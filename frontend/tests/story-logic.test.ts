@@ -64,6 +64,11 @@ describe("problemMessage", () => {
     expect(problemMessage({ status: 404 }, null)).toBe("We couldn't find that story.");
     expect(problemMessage({ status: 500 }, null)).toMatch(/Something went wrong/);
   });
+
+  it("shows the backend's own words for the per-visitor limit", () => {
+    const detail = "That's all the stories for today. Please come back tomorrow for more.";
+    expect(problemMessage({ status: 429, code: "visitor_limit", detail }, 3600)).toBe(detail);
+  });
 });
 
 describe("parseRetryAfter and UUID_PATTERN", () => {
@@ -98,6 +103,10 @@ describe("autoRetryDelaySeconds", () => {
   it("gives up after the retry limit", () => {
     expect(autoRetryDelaySeconds(429, 10, MAX_AUTO_RETRIES - 1)).toBe(11);
     expect(autoRetryDelaySeconds(429, 10, MAX_AUTO_RETRIES)).toBeNull();
+  });
+
+  it("never retries a visitor's own story limit, which is an hour or a day away", () => {
+    expect(autoRetryDelaySeconds(429, 1800, 0, "visitor_limit")).toBeNull();
   });
 });
 

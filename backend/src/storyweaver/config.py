@@ -81,6 +81,12 @@ class Settings(BaseSettings):
     image_sampler: str = "dpmpp_2m_karras"
     image_steps: int = Field(default=25, ge=1, le=100)
     image_guidance: float = Field(default=6.0, ge=0, le=20)
+    # Our own limits (routing/limits.py). Every visitor's stories use one Groq organisation and every
+    # picture one HF account's ZeroGPU quota, so one visitor must not use up the day for everyone.
+    visitor_stories_per_hour: int = Field(default=5, ge=1)
+    visitor_stories_per_day: int = Field(default=15, ge=1)
+    gpu_seconds_per_day: int = Field(default=900, ge=0)  # 15 min, below the account's ZeroGPU allowance
+    gpu_seconds_per_image: float = Field(default=12.0, gt=0)  # booked before each call, then settled
     # Delete stories (rows and audio) this many days after creation; 0 keeps them forever (docs/privacy.md).
     story_retention_days: int = Field(default=30, ge=0, le=3650)
     retention_sweep_seconds: float = Field(default=3600.0, ge=10)
