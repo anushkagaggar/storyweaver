@@ -33,9 +33,14 @@ class ModelLimits:
     tpd: int | None = None
     audio_seconds_per_hour: int | None = None
     audio_seconds_per_day: int | None = None
+    # This model's own headroom, overriding the router's (see gpt-oss-safeguard below).
+    margin: float | None = None
 
     def limits(self, margin: float = 1.0) -> list[Limit]:
-        """Limits scaled by `margin` (e.g. 0.9 keeps 10% headroom below Groq's numbers)."""
+        """Limits scaled by `margin` (e.g. 0.9 keeps 10% headroom below Groq's numbers), or by this
+        model's own margin when it has one."""
+        if self.margin is not None:
+            margin = self.margin
         pairs: list[tuple[Unit, int, int | None]] = [
             ("requests", MINUTE, self.rpm),
             ("requests", DAY, self.rpd),
@@ -60,7 +65,10 @@ GROQ_FREE_TIER: dict[str, ModelLimits] = {
     ),
     "canopylabs/orpheus-v1-english": ModelLimits(rpm=10, rpd=100, tpm=1_200, tpd=3_600),
     "meta-llama/llama-prompt-guard-2-22m": ModelLimits(rpm=30, rpd=14_400, tpm=15_000, tpd=500_000),
-    "openai/gpt-oss-safeguard-20b": ModelLimits(rpm=3, rpd=1_000, tpm=2_000, tpd=200_000),
+    # Two checks per story (the idea, then the finished story) use ~1,820 real tokens (16 Nov 2026): under
+    # Groq's 2,000 a minute but over 90% of it, so the second check always waited for the next minute. 97%
+    # lets them fit. Usage is settled to Groq's real counts, and a rare Groq 429 is handled by a cooldown.
+    "openai/gpt-oss-safeguard-20b": ModelLimits(rpm=3, rpd=1_000, tpm=2_000, tpd=200_000, margin=0.97),
 }
 
 

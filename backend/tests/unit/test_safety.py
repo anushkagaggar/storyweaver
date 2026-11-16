@@ -6,9 +6,12 @@ import pytest
 from story_samples import make_planned_story
 from storyweaver.llm.client import ChatMessage, LLMResult
 from storyweaver.llm.schemas import PlannedStory
+from storyweaver.routing.llm import booked_completion_tokens, estimate_prompt_tokens
+from storyweaver.routing.quotas import limits_for
 from storyweaver.safety.guards import (
     INPUT_REJECTED_MESSAGE,
     POLICY,
+    POLICY_VERDICT_SCHEMA,
     GuardModels,
     InputGuard,
     OutputGuard,
@@ -22,6 +25,36 @@ from storyweaver.safety.rules import check_rules
 pytestmark = pytest.mark.unit
 
 MODELS = GuardModels()
+
+
+def _booked_tokens(kind: str, content: str) -> int:
+    """What the router books for one safeguard call: the prompt estimate plus the answer allowance."""
+    messages = [
+        ChatMessage("system", POLICY),
+        ChatMessage("user", f"Content type: {kind}\nContent to classify:\n{content}"),
+    ]
+    return estimate_prompt_tokens(messages, POLICY_VERDICT_SCHEMA) + booked_completion_tokens(
+        MODELS.safeguard, MODELS.safeguard_max_tokens
+    )
+
+
+def test_an_idea_check_and_a_story_check_fit_in_one_minute_of_safeguard_budget() -> None:
+    # Both checks for one story run within a minute (the planner takes seconds). When they didn't fit, the
+    # router waited for the next clock minute: every story waited 40-70 s for the output check (16 Nov
+    # 2026). A long case: a 200-character idea (most are under 100) and a five-scene story longer than real
+    # ones. The very longest ideas (500 characters) with a long story can still wait for the next minute;
+    # squeezing the policy further made its verdicts worse.
+    budget = next(
+        limit.amount
+        for limit in limits_for(MODELS.safeguard).limits(margin=0.9)
+        if limit.unit == "tokens" and limit.window_seconds == 60
+    )
+    story = PlannedStory.model_validate(make_planned_story(5)).to_story(age_band="4-6", story_key="k")
+    long_idea = ("a little dragon who is scared of the dark " * 5)[:200]
+    booked = _booked_tokens("story idea", long_idea) + _booked_tokens(
+        "finished story", story_for_review(story)
+    )
+    assert booked <= budget, (booked, budget)
 
 
 @pytest.mark.parametrize(

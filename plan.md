@@ -591,10 +591,13 @@ Every version follows the **release process in §11**. Each version lists **buil
       and a rolling 60 s window never makes one chunk wait that long. The "nothing after five minutes" seen
       on 14 Nov was most likely the wrong B2 credentials (upload failed, scene redone). `TTS_ENGINE=kokoro`
       is removed from the Space and from the compose default.
-- [ ] **The two safeguard checks don't fit in one minute.** `gpt-oss-safeguard-20b` allows 1,800 tokens a
+- [x] **The two safeguard checks don't fit in one minute.** `gpt-oss-safeguard-20b` allows 1,800 tokens a
       minute after the margin; the input check (~900) and the output check (~1,500) exceed that, so the
-      `plan` job was deferred 22 s + 49 s live (71 of the 76 s from idea to text). This blocks the "first
-      page ≤ 15 s" exit criterion more than images do. Likely fix: a shorter policy prompt.
+      `plan` job was deferred 22 s + 49 s live (71 of the 76 s from idea to text). Done 16 Nov 2026: the
+      policy is 2,586 → 1,737 characters (prompt 813 → ~620 tokens a call), the router books safeguard's
+      expected answer (150) instead of its `max_tokens` (now 512, after a hard case ran past 300), and
+      safeguard keeps a 97% margin of its own. 17 live cases all judged right; idea to text went from
+      50-107 s to 5 s locally. A 500-character idea with a long story can still wait for the next minute.
 - [x] **Pacing blocks the single worker.** Done 15 Nov 2026: one claim loop per job kind (worker lanes).
       They share one event loop, so they stay independent only while no handler blocks it; CPU work runs
       in threads and GPU work is an HTTP call. A test shows a plan job finishing while a tts job sleeps.

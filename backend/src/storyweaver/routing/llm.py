@@ -39,6 +39,17 @@ UNAVAILABLE_COOLDOWN = 30.0
 
 CHARS_PER_TOKEN = 4  # typical for English; `settle` replaces the estimate with Groq's real count
 
+# Completion tokens to book for models whose answers are far shorter than the max_tokens they need as
+# headroom. Booking max_tokens made gpt-oss-safeguard's two checks per story (idea, then finished story)
+# overrun its 1,800-token minute and the second always waited 40-70 s. Its verdicts use 78-178 tokens at
+# reasoning_effort=low (16 Nov 2026) but need 300 of room, or a long one fails mid-JSON. Booking short
+# only risks a Groq 429 now and then, which `_route` handles; `settle` books the real count either way.
+EXPECTED_COMPLETION_TOKENS: dict[str, int] = {"openai/gpt-oss-safeguard-20b": 150}
+
+
+def booked_completion_tokens(model: str, max_tokens: int) -> int:
+    return min(max_tokens, EXPECTED_COMPLETION_TOKENS.get(model, max_tokens))
+
 
 def estimate_prompt_tokens(messages: Sequence[ChatMessage], schema: Mapping[str, Any] | None = None) -> int:
     """Estimate input tokens before the call. Too high blocks small budgets (safeguard: 1,800 tokens/min);
@@ -80,7 +91,7 @@ class RoutedLLM:
                 temperature=temperature,
             )
 
-        estimate = estimate_prompt_tokens(messages, schema) + max_tokens
+        estimate = estimate_prompt_tokens(messages, schema) + booked_completion_tokens(model, max_tokens)
         return await self._route(model, estimate, call, name=schema_name, messages=messages)
 
     async def complete_text(self, *, model: str, messages: list[ChatMessage], max_tokens: int) -> LLMResult:

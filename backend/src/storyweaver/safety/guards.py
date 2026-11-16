@@ -97,7 +97,10 @@ class GuardModels:
     prompt_guard: str = "meta-llama/llama-prompt-guard-2-22m"
     safeguard: str = "openai/gpt-oss-safeguard-20b"
     prompt_guard_threshold: float = 0.5
-    safeguard_max_tokens: int = 300
+    # Room for the reasoning and the verdict. Most verdicts use 80-180 tokens, but a hard case (a film
+    # character in an idea) ran past 300 and failed mid-JSON (16 Nov 2026). Generous room costs no budget:
+    # the router books only the expected size for this model (routing/llm.py), then the real count.
+    safeguard_max_tokens: int = 512
 
 
 class PolicyChecker:

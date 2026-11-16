@@ -1,5 +1,6 @@
 import pytest
 
+from storyweaver.routing.llm import booked_completion_tokens
 from storyweaver.routing.quotas import GROQ_FREE_TIER, ModelLimits, limits_for
 from storyweaver.routing.router import ModelRouter, QuotaExhaustedError
 from storyweaver.routing.store import InMemoryQuotaStore, Reservation, Usage
@@ -36,6 +37,17 @@ def test_margin_scales_limits_and_never_reaches_zero() -> None:
     limits = {limit.name: limit.amount for limit in ModelLimits(rpm=3, tpm=2_000).limits(0.1)}
 
     assert limits == {"requests/60s": 1, "tokens/60s": 200}
+
+
+def test_a_model_can_keep_its_own_margin() -> None:
+    own = {limit.name: limit.amount for limit in ModelLimits(rpm=3, tpm=2_000, margin=0.97).limits(0.9)}
+    assert own == {"requests/60s": 2, "tokens/60s": 1_940}  # the router's 0.9 is overridden
+
+
+def test_safeguard_books_its_expected_answer_not_its_whole_allowance() -> None:
+    assert booked_completion_tokens(SAFEGUARD, 300) == 150
+    assert booked_completion_tokens(SAFEGUARD, 100) == 100  # never more than the call may use
+    assert booked_completion_tokens(GPT20, 4_000) == 4_000  # other models book their max_tokens
 
 
 async def test_requests_per_minute_limit_with_margin() -> None:
