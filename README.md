@@ -337,7 +337,7 @@ storyweaver/
 | `evaluation/data/prompts_v1.txt` | The 50 eval prompts |
 | `evaluation/results/json_validity_v1.{md,jsonl}` | Results: 50/50 valid |
 | `infra/docker-compose.yml` | Local stack: API (GPU), web, Postgres + pgvector, Redis, SeaweedFS S3 (:8333) |
-| `scripts/local_smoke.sh` | 48 end-to-end checks (incl. one real Whisper call and Kokoro narration) against the running stack; exits non-zero on failure |
+| `scripts/local_smoke.sh` | 49 end-to-end checks (incl. one real Whisper call and Kokoro narration) against the running stack; exits non-zero on failure |
 | `docs/decisions/ADR-0001-zerogpu-fastapi.md` | Why the app is a `gr.Server` with Gradio GPU endpoints alongside REST |
 | `docs/decisions/ADR-0002-redirect-brand-ideas.md` | Why brand ideas are adapted, not refused |
 | `docs/decisions/ADR-0003-pyav-gpl-ffmpeg.md` | Why PyAV's GPL-built FFmpeg is acceptable server-side (never distributed) |
@@ -425,7 +425,7 @@ copy frontend\.env.example frontend\.env.local
 # 2. Full local stack: API (GPU) :7860, web :3000, Postgres :5432, Redis :6379, SeaweedFS S3 :8333
 docker compose -f infra/docker-compose.yml --env-file .env up --build
 
-# 3. Smoke test (Git Bash), 48 checks
+# 3. Smoke test (Git Bash), 49 checks
 bash scripts/local_smoke.sh .env
 ```
 

@@ -88,8 +88,15 @@ check "status page 200"                 200 "$(code $WEB/status)"
 check "story page 200"                  200 "$(code $WEB/story/00000000-0000-4000-8000-000000000000)"
 check "privacy page 200"                200 "$(code $WEB/privacy)"
 # Story routes. The unsafe idea is a URL: the rules reject it before any model call, so no Groq quota is used.
-unsafe=$(curl -s -m 30 -X POST $WEB/api/stories -H 'Content-Type: application/json' -d '{"prompt":"visit www.example.com with Pip"}')
-check "api/stories unsafe idea -> 422"  "unsafe_input|urls" "$(echo "$unsafe" | python -I -c 'import json,sys;d=json.load(sys.stdin);print(d.get("code"),d.get("category"),sep="|")')"
+# Each run is a fresh visitor (a random benchmark-range IP), so reruns never hit the shared "unidentified" bucket.
+VISITOR="198.18.$((RANDOM % 256)).$((RANDOM % 254 + 1))"
+unsafe_idea() { curl -s -m 30 -X POST $WEB/api/stories -H 'Content-Type: application/json' -H "X-Forwarded-For: $VISITOR" -d '{"prompt":"visit www.example.com with Pip"}'; }
+problem() { python -I -c 'import json,sys;d=json.load(sys.stdin);print(d.get("code"),d.get(sys.argv[1]),sep="|")' "$1"; }
+check "api/stories unsafe idea -> 422"  "unsafe_input|urls" "$(unsafe_idea | problem category)"
+# V3 per-visitor limit (5 an hour): ideas count even when rejected, so the 6th from this visitor is refused. This
+# only passes if the web route forwards the visitor's IP (a stale dev server once didn't: restart the web container).
+for _ in 1 2 3 4; do unsafe_idea >/dev/null; done
+check "api/stories 6th from visitor -> limit" "visitor_limit|hour" "$(unsafe_idea | problem window)"
 check "api/stories bad JSON -> 400"     400 "$(code -X POST $WEB/api/stories -H 'Content-Type: application/json' -d '{bad')"
 check "api/stories/<bad id> -> 404"     404 "$(code $WEB/api/stories/not-a-uuid)"
 check "api/stories/<unknown> -> 404"    404 "$(code $WEB/api/stories/00000000-0000-4000-8000-000000000000)"
