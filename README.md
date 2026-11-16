@@ -230,6 +230,7 @@ storyweaver/
 | `migrations/script.py.mako` | Template for new migrations |
 | `migrations/versions/0001_initial_v1_tables.py` | `stories`, `characters`, `scenes`, `jobs` |
 | `migrations/versions/0002_story_adaptation.py` | `stories.adaptation` (V1.1, expand-only). V2 added **no** migration: narration reuses columns `0001` created |
+| `migrations/versions/0003_scene_image_status.py`, `0004_story_owner.py` | `scenes.image_status`; `stories.owner_id` (V3, expand-only) |
 
 **`backend/src/storyweaver/`**
 
@@ -244,7 +245,8 @@ storyweaver/
 | `api/middleware.py` | `X-Request-ID`: accepted if valid, otherwise generated; echoed on every response |
 | `api/gpu_endpoints.py` | Gradio API endpoints for GPU work (`gpu_check`), each checking the API key |
 | `api/routers/health.py` | `/health/live` and `/health/ready` (database, Redis, worker, audio storage) |
-| `api/routers/stories.py` | `POST /v1/stories`, `GET` and `DELETE /v1/stories/{id}`, `GET /v1/jobs/{id}` |
+| `api/routers/stories.py` | `POST`/`GET /v1/stories`, `GET` and `DELETE /v1/stories/{id}`, `POST /v1/stories/{id}/share`, `GET /v1/shared/{token}`, `GET /v1/jobs/{id}` |
+| `auth/user_token.py`, `auth/share_links.py` | Verifying the signed-in parent's `X-User-Token`; 15-minute share links (V3) |
 | `api/routers/speech.py` | `POST /v1/speech/transcribe` (raw audio body, never multipart), `POST /v1/speech/narrate`, `GET /v1/speech/voices` |
 | `speech/audio_utils.py` | In-memory decode to 16 kHz mono with PyAV; size, duration and silence checks |
 | `speech/stt.py` / `speech/tts.py` | `STTEngine` / `TTSEngine` interfaces and their errors |
@@ -303,8 +305,11 @@ storyweaver/
 | `components/MicRecorder.tsx` | Records an idea with MediaRecorder and sends it for transcription |
 | `components/DeleteStory.tsx` | Delete this story and its audio, with a confirmation |
 | `app/globals.css` | Styles (light/dark tokens) |
-| `app/api/stories/route.ts` | `POST /api/stories` → backend `POST /v1/stories` (validates input; forwards only the allowed fields and Idempotency-Key) |
-| `app/api/stories/[id]/route.ts` | `GET` and `DELETE /api/stories/{id}` → backend (UUID checked first) |
+| `lib/auth.ts`, `lib/session.ts` | Google sign-in (OIDC code + PKCE on `node:crypto`), the session cookie, and the per-request `X-User-Token` |
+| `app/api/auth/*` | `signin` → Google, `callback/google`, `signout` (POST) |
+| `app/api/stories/route.ts` | `GET` (my stories) and `POST /api/stories` → backend, as the signed-in parent (validates input; forwards only the allowed fields and Idempotency-Key) |
+| `app/api/stories/[id]/route.ts`, `[id]/share/route.ts` | `GET`, `DELETE` and `POST …/share` → backend (UUID checked first; owner only) |
+| `app/api/shared/[token]/route.ts`, `app/s/[token]/page.tsx` | Reading a story through a share link (no sign-in) |
 | `app/api/status/route.ts` | Aggregates the backend's health, Groq check and the GPU check |
 | `components/StoryForm.tsx` | Prompt form: Idempotency-Key per idea, busy countdown and auto-resubmit, Cancel |
 | `components/StoryViewer.tsx` | Polls the story with backoff and shows its progress, the book or the failure; keeps polling for narration after the text is ready |
@@ -337,7 +342,7 @@ storyweaver/
 | `evaluation/data/prompts_v1.txt` | The 50 eval prompts |
 | `evaluation/results/json_validity_v1.{md,jsonl}` | Results: 50/50 valid |
 | `infra/docker-compose.yml` | Local stack: API (GPU), web, Postgres + pgvector, Redis, SeaweedFS S3 (:8333) |
-| `scripts/local_smoke.sh` | 49 end-to-end checks (incl. one real Whisper call and Kokoro narration) against the running stack; exits non-zero on failure |
+| `scripts/local_smoke.sh` | 61 end-to-end checks (incl. one real Whisper call and Kokoro narration) against the running stack; exits non-zero on failure |
 | `docs/decisions/ADR-0001-zerogpu-fastapi.md` | Why the app is a `gr.Server` with Gradio GPU endpoints alongside REST |
 | `docs/decisions/ADR-0002-redirect-brand-ideas.md` | Why brand ideas are adapted, not refused |
 | `docs/decisions/ADR-0003-pyav-gpl-ffmpeg.md` | Why PyAV's GPL-built FFmpeg is acceptable server-side (never distributed) |
@@ -360,9 +365,14 @@ All `/v1` routes need `X-API-Key`. Errors are RFC 7807 `application/problem+json
 | Method | Path | Description |
 |---|---|---|
 | `POST` | `/v1/stories` | Body `{prompt, age_band="4-6", num_scenes: 5\|6}`, optional `Idempotency-Key`. **202** `{story_id, job_id, status}`; **422** unsafe idea (`code: unsafe_input`, `category`, message); **429/503** safety check busy (`Retry-After`) |
-| `GET` | `/v1/stories/{id}` | Status (`queued` → `planning` → `checking` → `ready` \| `failed`); content only when `ready`; `notice` if the idea was adapted |
-| `DELETE` | `/v1/stories/{id}` | Deletes the story, its pages and its audio files. **204**; **404** unknown; **409** still being made (`Retry-After`); **503** files not removed yet (story already hidden; retry). Stories also expire after `STORY_RETENTION_DAYS` (30) |
-| `GET` | `/v1/jobs/{id}` | Job status, attempts and next run time |
+| `GET` | `/v1/stories` | The caller's own stories, newest first (`?limit=` up to 50) |
+| `GET` | `/v1/stories/{id}` | Status (`queued` → `planning` → `checking` → `ready` \| `failed`); content only when `ready`; `notice` if the idea was adapted. **404** if it isn't the caller's |
+| `DELETE` | `/v1/stories/{id}` | Deletes the story, its pages, pictures and audio files. Owner only. **204**; **404** unknown or not the caller's; **409** still being made (`Retry-After`); **503** files not removed yet (story already hidden; retry). Stories also expire after `STORY_RETENTION_DAYS` (30) |
+| `POST` | `/v1/stories/{id}/share` | Owner only, once `ready`. **201** `{token, expires_at}`: a read-only link valid for `SHARE_LINK_TTL_SECONDS` (900) from now, never renewed; **409** not ready |
+| `GET` | `/v1/shared/{token}` | The story through a share link, with `share_expires_at`; no user token needed. Media URLs expire with the link. **404** expired, forged or deleted |
+| `GET` | `/v1/jobs/{id}` | Job status, attempts and next run time (owner only) |
+
+Every story route acts for an **owner**: the signed-in parent named by `X-User-Token` (a 60 s HS256 JWT the Vercel server signs with `USER_TOKEN_SECRET`), or, with no token, the separate "operator" owner (MCP server, scripts). An invalid token is **401** `code: sign_in_required`.
 | `POST` | `/v1/speech/transcribe` | **Raw audio body** (`audio/webm`, `mp4`, `wav`, …), not multipart. **200** `{text, engine, model, duration_seconds}`; **413** > 10 MB; **415** not audio; **422** empty, unreadable, silent, > 60 s, or no words; **429/503** busy or unavailable |
 | `POST` | `/v1/speech/narrate` | Body `{text, voice?}` (≤ 600 chars). **200** `audio/mpeg` with `X-TTS-Engine`, `X-TTS-Voice`, `X-Audio-Duration`; **422** blank, too long or unknown voice; **429** the named Orpheus voice has no quota (`Retry-After`) |
 | `GET` | `/v1/speech/voices` | Every voice `/narrate` accepts, per engine, with each engine's narrator |
@@ -425,7 +435,7 @@ copy frontend\.env.example frontend\.env.local
 # 2. Full local stack: API (GPU) :7860, web :3000, Postgres :5432, Redis :6379, SeaweedFS S3 :8333
 docker compose -f infra/docker-compose.yml --env-file .env up --build
 
-# 3. Smoke test (Git Bash), 49 checks
+# 3. Smoke test (Git Bash), 61 checks
 bash scripts/local_smoke.sh .env
 ```
 
@@ -521,6 +531,10 @@ docker run --rm -v "<frontend dir>:/w" -w /w node:24-alpine \
 | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` | optional | Turn tracing on |
 | `STORYWEAVER_API_URL` | Vercel env | The `*.hf.space` URL (not `huggingface.co/spaces/...`) |
 | `HF_TOKEN` | Vercel env | Read-only HF token; ZeroGPU charges GPU quota to it |
+| `USER_TOKEN_SECRET` | Space **Secret**, Vercel env, `.env` | Signs `X-User-Token` and share links (V3). Not the API key |
+| `AUTH_SECRET` | Vercel env, `.env` | Signs the session cookie and derives each parent's pseudonymous id. Changing it orphans everyone's stories |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Vercel env, `.env` | Google OAuth web client; redirect URI `<site>/api/auth/callback/google` |
+| `AUTH_URL` | Vercel env | `https://<vercel domain>`, so the redirect URI matches Google's settings exactly (compose sets localhost) |
 | `S3_ENDPOINT_URL`, `S3_REGION`, `S3_BUCKET` | Space **Variables**, `.env` | Narration audio store. For B2 the region is the middle segment of the endpoint (`s3.<region>.backblazeb2.com`), not an AWS region; a scheme-less endpoint is accepted and normalised to `https://` |
 | `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | Space **Secrets**, `.env` | B2 application key, scoped to the one bucket, Read and Write. Locally these are the SeaweedFS credentials instead |
 | `STT_ENGINE` | optional | `groq` (default) or `local` to keep voice processing on the Space |
@@ -538,6 +552,7 @@ Secrets go only in HF Space **Secrets** (Variables are public) and Vercel env. N
 - **Refused ideas are never stored.** The input check runs before anything is written to the database.
 - **No tracked content in traces:** Langfuse doesn't capture prompts or stories unless `LANGFUSE_CAPTURE_CONTENT=true`.
 - **No secrets in the browser:** the API key exists only in server-side code (Vercel route handlers, the MCP server).
+- **Private stories (V3):** parents sign in with Google (scope `openid` only; we keep a pseudonymous id, never the email or Google's id). Only a story's owner can read, list, share or delete it; a share link is read-only and stops working 15 minutes after it was made.
 - **Allowed models only:** no gated, non-commercial or GPL models (see `plan.md` §2.2).
 - **Voice:** a recording is held in memory only, never written to disk or logged, and neither is its transcript. `STT_ENGINE=local` keeps voice processing on the Space. Narration audio lives in a private bucket and reaches the browser only through expiring presigned URLs.
 

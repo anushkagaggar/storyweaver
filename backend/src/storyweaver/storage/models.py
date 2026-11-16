@@ -105,6 +105,9 @@ class StoryRow(_Timestamps, Base):
     request_hash: Mapped[str | None] = mapped_column(String(64))
     # Set when the idea was adapted before planning, e.g. "brands": named characters became original ones.
     adaptation: Mapped[str | None] = mapped_column(String(32))
+    # V3 (migration 0004): the signed-in user's pseudonymous id, or "operator" for API-key-only callers
+    # (auth/user_token.py). NULL for stories made before V3: nobody owns them, so nobody can open them.
+    owner_id: Mapped[str | None] = mapped_column(String(64))
 
     characters: Mapped[list["CharacterRow"]] = relationship(
         back_populates="story", cascade="all, delete-orphan", order_by="CharacterRow.position"
@@ -116,6 +119,7 @@ class StoryRow(_Timestamps, Base):
     __table_args__ = (
         Index("ix_stories_status", "status"),
         Index("ix_stories_created_at", "created_at"),
+        Index("ix_stories_owner_id_created_at", "owner_id", "created_at"),  # "My stories", newest first
     )
 
 

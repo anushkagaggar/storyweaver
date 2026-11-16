@@ -30,6 +30,8 @@ dependencies = [
     "boto3>=1.36",
     # Images (V3): Pillow (MIT-CMU) draws the placeholder and encodes PNGs. Gradio already depends on it.
     "pillow>=11",
+    # Verifies the signed-in user's token from the Vercel server (V3, auth/user_token.py).
+    "pyjwt>=2.10",
 ]
 
 [project.optional-dependencies]

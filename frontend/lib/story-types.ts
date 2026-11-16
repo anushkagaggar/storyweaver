@@ -45,6 +45,15 @@ export type Story = {
 
 export type CreateStoryResponse = { story_id: string; job_id: string; status: StoryStatus };
 
+/** One row of "My stories" (GET /api/stories). The title is set once the story is ready. */
+export type StorySummary = { id: string; status: StoryStatus | "deleting"; title: string | null; created_at: string };
+
+/** A read-only link to a story (POST /api/stories/{id}/share). It stops working at expires_at and is never renewed. */
+export type ShareLink = { token: string; expires_at: string };
+
+/** A story read through a share link (GET /api/shared/{token}). */
+export type SharedStory = Story & { share_expires_at: string };
+
 /** RFC 7807 problem body, plus the extra fields our API adds. */
 export type Problem = {
   status: number;

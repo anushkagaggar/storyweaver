@@ -47,6 +47,13 @@ services:
     environment:
       STORYWEAVER_API_URL: http://api:7860
       STORYWEAVER_API_KEY: ${STORYWEAVER_API_KEY:?set STORYWEAVER_API_KEY in .env}
+      # Sign-in (V3, frontend/lib/auth.ts). The api reads USER_TOKEN_SECRET from .env too. Without the Google
+      # client, the site shows the sign-in page but can't sign anyone in (the smoke test signs its own cookie).
+      AUTH_SECRET: ${AUTH_SECRET:?set AUTH_SECRET in .env}
+      USER_TOKEN_SECRET: ${USER_TOKEN_SECRET:?set USER_TOKEN_SECRET in .env}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      AUTH_URL: http://localhost:3000
       WATCHPACK_POLLING: "true"
     ports:
       - "3000:3000"

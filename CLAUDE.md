@@ -8,7 +8,7 @@ StoryWeaver is a voice-first, illustrated children's audiobook generator (text �
 
 `plan.md` is the source of truth. **V0 is done (14 Oct 2026):** frontend live on Vercel (`https://storyweaver-eight-woad.vercel.app`, root dir `frontend`), backend on the ZeroGPU Space `gaggaranushka/storyweaver` (`https://gaggaranushka-storyweaver.hf.space`). V1+ are still designs.
 
-Deploys: pushing to `main` redeploys Vercel; pushing a `v*` tag runs CI and then uploads `backend/` to the Space. Vercel env: `STORYWEAVER_API_URL` (the `*.hf.space` URL, never `huggingface.co/spaces/...`), `STORYWEAVER_API_KEY`, and `HF_TOKEN` (read-only; GPU quota). The write HF token lives only in GitHub Actions secrets. Space Secrets: `STORYWEAVER_API_KEY`, `GROQ_API_KEY`, and from V2 `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` (B2 key limited to the bucket). Variables: `APP_ENV=prod`, `ALLOWED_ORIGINS` (Vercel domain only, no trailing slash), and from V2 `S3_ENDPOINT_URL`, `S3_REGION`, `S3_BUCKET`. Before you implement anything, read the matching version section of `plan.md` (§10). Each version has its own task list and exit criteria. <!-- pragma: allowlist secret (names only, no values) -->
+Deploys: pushing to `main` redeploys Vercel; pushing a `v*` tag runs CI and then uploads `backend/` to the Space. Vercel env: `STORYWEAVER_API_URL` (the `*.hf.space` URL, never `huggingface.co/spaces/...`), `STORYWEAVER_API_KEY`, `HF_TOKEN` (read-only; GPU quota), and from V3 `AUTH_SECRET`, `USER_TOKEN_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `AUTH_URL` (sign-in). The write HF token lives only in GitHub Actions secrets. Space Secrets: `STORYWEAVER_API_KEY`, `GROQ_API_KEY`, and from V2 `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` (B2 key limited to the bucket), and from V3 `USER_TOKEN_SECRET`. Variables: `APP_ENV=prod`, `ALLOWED_ORIGINS` (Vercel domain only, no trailing slash), and from V2 `S3_ENDPOINT_URL`, `S3_REGION`, `S3_BUCKET`. Before you implement anything, read the matching version section of `plan.md` (§10). Each version has its own task list and exit criteria. <!-- pragma: allowlist secret (names only, no values) -->
 
 Two deviations from the plan's layout:
 - Backend tests live in `backend/tests/`, not the root `tests/`.
@@ -42,7 +42,7 @@ uv run pytest ; uv run mcp dev server.py   # tests (real MCP protocol in memory,
 
 # repo root: full local stack (api with GPU, web, postgres+pgvector, redis, SeaweedFS S3 on :8333)
 docker compose -f infra/docker-compose.yml --env-file .env up --build
-bash scripts/local_smoke.sh .env                                 # 49 end-to-end checks (REST, speech-to-text, text-to-speech, Gradio GPU endpoint, frontend); exits non-zero on failure
+bash scripts/local_smoke.sh .env                                 # 61 end-to-end checks (REST, speech-to-text, text-to-speech, Gradio GPU endpoint, sign-in and owners, frontend); exits non-zero on failure
 ```
 
 The user's rule is to test locally (unit tests plus the smoke script against the Docker stack) before deploying anything.
@@ -69,7 +69,8 @@ Pre-commit runs ruff, mypy (both as local hooks through `uv run`) and detect-sec
     - `@spaces.GPU` modules must be imported at startup (`gpu_endpoints.py` imports them).
     - HF installs `gradio[oauth,mcp]` on the Space; CI resolves that install set, so keep the lock compatible.
     - Gradio's own CORS middleware reflects any origin on non-localhost hosts; `StoryWeaverServer` skips it so our `CORSMiddleware` is the only policy. Keep that override.
-    - On HF the `*.hf.space` proxy adds permissive CORS to every response anyway, so **CORS is not an access control there; `X-API-Key` is**. Never expose the key to browsers or add cookie/ambient auth.
+    - On HF the `*.hf.space` proxy adds permissive CORS to every response anyway, so **CORS is not an access control there; `X-API-Key` is**. Never expose the key to browsers or add cookie/ambient auth to the backend.
+    - **Users (V3).** Parents sign in with Google on the Vercel side only (`frontend/lib/auth.ts`; the session cookie never reaches the backend). Vercel routes send `X-User-Token` (60 s HS256 JWT, `USER_TOKEN_SECRET`); the backend (`auth/user_token.py`, `OwnerDep`) scopes every story route to that owner and answers 404 otherwise. No token = the "operator" owner (MCP, scripts); an invalid token is a 401, never the operator. Share links (`auth/share_links.py`) are the only way to read someone else's story.
     - Open for V3: GPU work started by the job worker has no caller to charge quota to.
 11. **Child safety and privacy** (§6.6):
     - Input checks run in this order: rules, then Prompt Guard, then gpt-oss-safeguard against `safety/policy.md`. The full output story is checked as well.

@@ -6,6 +6,13 @@ from fastapi import Depends, Header, HTTPException, Request, status
 from groq import AsyncGroq
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from storyweaver.auth.share_links import ShareLinks
+from storyweaver.auth.user_token import (
+    OPERATOR,
+    InvalidUserTokenError,
+    SignInRequiredError,
+    verify_user_token,
+)
 from storyweaver.config import Settings, get_settings
 from storyweaver.orchestrator.story_deletion import StoryDeletion
 from storyweaver.orchestrator.story_service import StoryService
@@ -30,6 +37,37 @@ async def require_api_key(
 ) -> None:
     if not api_key_is_valid(x_api_key, settings):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, INVALID_API_KEY_MESSAGE)
+
+
+async def current_owner(
+    settings: SettingsDep,
+    x_user_token: Annotated[str | None, Header()] = None,
+) -> str:
+    """Who owns the stories this request may see: the signed-in user, or OPERATOR for API-key-only callers.
+
+    The API key is checked first by the router; this only decides whose stories. A token that is present
+    but invalid is never downgraded to OPERATOR (that would show a user the operator's stories).
+    """
+    if x_user_token is None:
+        return OPERATOR
+    if settings.user_token_secret is None:
+        raise SignInRequiredError("USER_TOKEN_SECRET is not configured.")
+    try:
+        return verify_user_token(x_user_token, settings.user_token_secret.get_secret_value())
+    except InvalidUserTokenError as exc:
+        raise SignInRequiredError(str(exc)) from exc
+
+
+OwnerDep = Annotated[str, Depends(current_owner)]
+
+
+def get_share_links(settings: SettingsDep) -> ShareLinks:
+    if settings.user_token_secret is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Sharing is not configured.")
+    return ShareLinks(settings.user_token_secret.get_secret_value(), settings.share_link_ttl_seconds)
+
+
+ShareLinksDep = Annotated[ShareLinks, Depends(get_share_links)]
 
 
 async def get_groq_client(settings: SettingsDep) -> AsyncIterator[AsyncGroq]:

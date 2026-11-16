@@ -24,6 +24,7 @@ from storyweaver.routing.store import InMemoryQuotaStore
 from storyweaver.safety.guards import SafetyCheckError, SafetyVerdict
 from storyweaver.storage.db import create_engine, create_session_factory
 from storyweaver.storage.models import JobKind, JobRow, JobStatus
+from user_tokens import ALICE, BOB, USER_TOKEN_SECRET, as_user, user_token
 
 pytestmark = pytest.mark.integration
 
@@ -72,6 +73,7 @@ def client(
 ) -> Iterator[TestClient]:
     # `session` is requested only for its cleanup (it truncates the tables after each test).
     monkeypatch.setenv("DATABASE_URL", database_url)
+    monkeypatch.setenv("USER_TOKEN_SECRET", USER_TOKEN_SECRET)
     get_settings.cache_clear()
     with TestClient(create_app()) as test_client:
         services = test_client.app.state.services  # type: ignore[attr-defined]
@@ -284,30 +286,162 @@ async def test_brand_idea_is_adapted_and_the_reader_is_told(
     assert "made up our own characters" in story["notice"]
 
 
-def test_a_visitor_over_the_limit_gets_a_friendly_429(client: TestClient, input_guard: StubGuard) -> None:
+def test_a_user_over_the_limit_gets_a_friendly_429(client: TestClient, input_guard: StubGuard) -> None:
     services = client.app.state.services  # type: ignore[attr-defined]
     limiter = VisitorLimiter(InMemoryQuotaStore(), per_hour=2, per_day=15, secret="s")
     services.stories = StoryService(services.sessions, input_guard=input_guard, visitor_limiter=limiter)  # type: ignore[arg-type]
-    visitor = {**API_KEY, "X-Client-IP": "203.0.113.7"}
 
-    assert (
-        client.post(
-            "/v1/stories", json=BODY, headers={**visitor, "Idempotency-Key": "visit-0001"}
-        ).status_code
-        == 202
-    )
+    def post(sub: str, key: str | None = None) -> Any:
+        extra = {"Idempotency-Key": key} if key else {}
+        return client.post("/v1/stories", json=BODY, headers={**API_KEY, **as_user(sub, **extra)})
+
+    assert post(ALICE, "visit-0001").status_code == 202
     # Replaying the same request isn't a new story, so it isn't counted again.
-    replay = client.post("/v1/stories", json=BODY, headers={**visitor, "Idempotency-Key": "visit-0001"})
-    assert replay.headers["Idempotent-Replayed"] == "true"
-    assert client.post("/v1/stories", json=BODY, headers=visitor).status_code == 202
-    limited = client.post("/v1/stories", json=BODY, headers=visitor)
+    assert post(ALICE, "visit-0001").headers["Idempotent-Replayed"] == "true"
+    assert post(ALICE).status_code == 202
+    limited = post(ALICE)
 
     assert limited.status_code == 429
     assert limited.headers["content-type"] == "application/problem+json"
     assert int(limited.headers["Retry-After"]) > 0
     assert limited.json()["code"] == "visitor_limit" and limited.json()["window"] == "hour"
-    other = {**API_KEY, "X-Client-IP": "198.51.100.2"}
-    assert client.post("/v1/stories", json=BODY, headers=other).status_code == 202
+    assert post(BOB).status_code == 202  # another user still can
+
+
+# --- Owners (V3 sign-in): only a story's owner can read, list, share or delete it. ---
+
+
+def _make_story(client: TestClient, owner: str | None) -> str:
+    """A queued story made by `owner` (None: an API-key-only caller). Run the worker to plan it."""
+    headers = {**API_KEY, **(as_user(owner) if owner else {})}
+    return str(client.post("/v1/stories", json=BODY, headers=headers).json()["story_id"])
+
+
+def _get(client: TestClient, path: str, owner: str | None) -> Any:
+    return client.get(path, headers={**API_KEY, **(as_user(owner) if owner else {})})
+
+
+async def test_only_the_owner_can_read_a_story(client: TestClient, db: Sessions) -> None:
+    alices = _make_story(client, ALICE)
+    operators = _make_story(client, None)
+    await _worker(db, StubLLM()).run_once()
+    await _worker(db, StubLLM()).run_once()
+
+    assert _get(client, f"/v1/stories/{alices}", ALICE).json()["status"] == "ready"
+    for path, caller in ((alices, BOB), (alices, None), (operators, ALICE)):
+        refused = _get(client, f"/v1/stories/{path}", caller)
+        assert refused.status_code == 404  # the same as a missing story: ids can't be probed
+    assert _get(client, f"/v1/stories/{operators}", None).status_code == 200
+
+
+async def test_stories_from_before_sign_in_belong_to_nobody(client: TestClient, db: Sessions) -> None:
+    story_id = _make_story(client, ALICE)
+    async with db() as s, s.begin():
+        await s.execute(text("UPDATE stories SET owner_id = NULL"))
+
+    assert _get(client, f"/v1/stories/{story_id}", ALICE).status_code == 404
+    assert _get(client, f"/v1/stories/{story_id}", None).status_code == 404
+
+
+def test_a_bad_user_token_is_401_never_the_operator(client: TestClient) -> None:
+    _make_story(client, None)
+    forged = user_token(ALICE, secret="x" * 40)
+
+    response = client.get("/v1/stories", headers={**API_KEY, "X-User-Token": forged})
+
+    assert response.status_code == 401
+    assert response.json()["code"] == "sign_in_required"
+    assert "signature" not in response.text.lower()  # the reason is logged, not returned
+
+
+async def test_my_stories_lists_only_mine_newest_first(client: TestClient, db: Sessions) -> None:
+    first = _make_story(client, ALICE)
+    _make_story(client, BOB)
+    second = _make_story(client, ALICE)
+    await _worker(db, StubLLM()).run_once()
+
+    listed = _get(client, "/v1/stories", ALICE).json()["stories"]
+
+    assert [s["id"] for s in listed] == [second, first]
+    assert listed[1]["title"] and listed[0]["title"] is None  # the title shows once the story is ready
+
+
+async def test_only_the_owner_can_delete_a_story(client: TestClient, db: Sessions) -> None:
+    story_id = _make_story(client, ALICE)
+    await _worker(db, StubLLM()).run_once()
+
+    bobs_try = client.delete(f"/v1/stories/{story_id}", headers={**API_KEY, **as_user(BOB)})
+    operators_try = client.delete(f"/v1/stories/{story_id}", headers=API_KEY)
+
+    assert bobs_try.status_code == operators_try.status_code == 404
+    assert _get(client, f"/v1/stories/{story_id}", ALICE).status_code == 200
+    assert client.delete(f"/v1/stories/{story_id}", headers={**API_KEY, **as_user(ALICE)}).status_code == 204
+
+
+def test_another_user_reusing_an_idempotency_key_gets_a_conflict_not_the_story(client: TestClient) -> None:
+    key = {"Idempotency-Key": "shared-key-0001"}
+    assert (
+        client.post("/v1/stories", json=BODY, headers={**API_KEY, **as_user(ALICE, **key)}).status_code == 202
+    )
+
+    bobs = client.post("/v1/stories", json=BODY, headers={**API_KEY, **as_user(BOB, **key)})
+
+    assert bobs.status_code == 422 and "Idempotency-Key" in bobs.json()["detail"]
+
+
+async def test_jobs_are_only_visible_to_the_story_owner(client: TestClient) -> None:
+    created = client.post("/v1/stories", json=BODY, headers={**API_KEY, **as_user(ALICE)}).json()
+
+    assert _get(client, f"/v1/jobs/{created['job_id']}", ALICE).status_code == 200
+    assert _get(client, f"/v1/jobs/{created['job_id']}", BOB).status_code == 404
+
+
+class RecordingBlobs:
+    """Signs fake URLs and remembers each one's lifetime."""
+
+    def __init__(self) -> None:
+        self.ttls: list[int] = []
+
+    def presigned_get_url(self, key: str, ttl: int) -> str:
+        self.ttls.append(ttl)
+        return f"https://blobs.example/{key}?ttl={ttl}"
+
+
+async def test_an_owner_shares_a_story_for_fifteen_minutes(client: TestClient, db: Sessions) -> None:
+    story_id = _make_story(client, ALICE)
+    await _worker(db, StubLLM()).run_once()
+    async with db() as s, s.begin():  # page 1 has its picture
+        await s.execute(text("UPDATE scenes SET image_key = 'k.png', image_status = 'ready' WHERE idx = 1"))
+    blobs = RecordingBlobs()
+    client.app.state.services.blobs = blobs  # type: ignore[attr-defined]
+
+    assert (
+        client.post(f"/v1/stories/{story_id}/share", headers={**API_KEY, **as_user(BOB)}).status_code == 404
+    )
+    made = client.post(f"/v1/stories/{story_id}/share", headers={**API_KEY, **as_user(ALICE)})
+    assert made.status_code == 201
+    share = made.json()
+
+    # A reader needs no sign-in, and gets the story with the link's expiry.
+    shared = client.get(f"/v1/shared/{share['token']}", headers=API_KEY)
+    assert shared.status_code == 200
+    body = shared.json()
+    assert body["id"] == story_id and body["title"] and body["share_expires_at"] == share["expires_at"]
+    assert body["scenes"][0]["image_url"]
+    assert blobs.ttls and max(blobs.ttls) <= 900  # pictures and audio stop with the link, not an hour later
+
+    assert client.get(f"/v1/shared/{share['token']}x", headers=API_KEY).status_code == 404
+    assert client.delete(f"/v1/stories/{story_id}", headers={**API_KEY, **as_user(ALICE)}).status_code == 204
+    gone = client.get(f"/v1/shared/{share['token']}", headers=API_KEY)
+    assert gone.status_code == 404 and "expired" in gone.json()["detail"]
+
+
+def test_a_story_can_only_be_shared_once_ready(client: TestClient) -> None:
+    story_id = _make_story(client, ALICE)  # not planned yet
+
+    response = client.post(f"/v1/stories/{story_id}/share", headers={**API_KEY, **as_user(ALICE)})
+
+    assert response.status_code == 409 and response.json()["code"] == "story_not_ready"
 
 
 async def test_ordinary_story_has_no_notice(client: TestClient, db: Sessions) -> None:

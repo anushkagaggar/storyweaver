@@ -2,7 +2,7 @@
 # Smoke test for the running local stack (docker compose). Covers REST routes, the Gradio GPU endpoint and the
 # frontend. Run from the repo root in Git Bash:
 #   bash scripts/local_smoke.sh .env
-# Reads STORYWEAVER_API_KEY from the given .env without printing it. Spends one tiny Groq call and one Whisper call;
+# Reads STORYWEAVER_API_KEY and AUTH_SECRET from the given .env without printing them. Spends one tiny Groq call and one Whisper call;
 # text-to-speech uses Kokoro only.
 set -u
 ENV_FILE=${1:-.env}
@@ -82,31 +82,59 @@ check "gpu_check without key -> error"  error "${res%%|*}"
 res=$(gradio_call gpu_check -H 'X-API-Key: wrong')
 check "gpu_check wrong key -> error"    error "${res%%|*}"
 
+echo "--- Sign-in and owners (V3)"
+# The smoke test can't sign in with Google, so it signs its own session cookies with AUTH_SECRET, exactly as the
+# callback does (frontend/lib/auth.ts). Each run uses two fresh random parents, so reruns never share a limit.
+AUTH=$(grep -E '^AUTH_SECRET=' "$ENV_FILE" | cut -d= -f2- | tr -d '\r')
+GOOGLE_ID=$(grep -E '^GOOGLE_CLIENT_ID=' "$ENV_FILE" | cut -d= -f2- | tr -d '\r')
+session_cookie() { python -I -c '
+import base64, hashlib, hmac, json, sys, time
+key = hmac.new(sys.argv[1].encode(), b"storyweaver session v1", hashlib.sha256).digest()
+b64 = lambda raw: base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+now = int(time.time())
+head = b64(json.dumps({"alg": "HS256", "typ": "JWT"}).encode())
+body = b64(json.dumps({"sub": sys.argv[2], "iat": now, "exp": now + 600}).encode())
+print("sw_session=" + head + "." + body + "." + b64(hmac.new(key, (head + "." + body).encode(), hashlib.sha256).digest()))
+' "$AUTH" "$(python -I -c 'import secrets;print(secrets.token_urlsafe(32))')"; }
+ALICE=$(session_cookie); BOB=$(session_cookie)
+problem() { python -I -c 'import json,sys;d=json.load(sys.stdin);print(d.get("code"),d.get(sys.argv[1]),sep="|")' "$1"; }
+unsafe_idea() { curl -s -m 30 -X POST $WEB/api/stories -H 'Content-Type: application/json' -H "Cookie: $1" -d '{"prompt":"visit www.example.com with Pip"}'; }
+check "home page signed out -> sign-in" 1 "$(curl -s $WEB/ | grep -c 'Sign in with Google')"
+if [ -n "$GOOGLE_ID" ]; then
+  check "signin -> Google (openid only)" "302|openid" "$(curl -s -o /dev/null -w '%{http_code}|%{redirect_url}' $WEB/api/auth/signin | sed -E 's/^([0-9]+)\|.*[?&]scope=([a-z]+).*/\1|\2/')"
+else
+  check "signin without Google client -> 503" 503 "$(code $WEB/api/auth/signin)"
+fi
+check "api/stories signed out -> 401"   "sign_in_required|None" "$(unsafe_idea 'sw_session=forged.cookie.value' | problem window)"
+check "api/stories list signed in -> 200" 200 "$(code -H "Cookie: $ALICE" $WEB/api/stories)"
+check "api/stories other site -> 403"   403 "$(code -X POST $WEB/api/stories -H "Cookie: $ALICE" -H 'Origin: https://evil.example' -H 'Content-Type: application/json' -d '{"prompt":"an owl"}')"
+check "backend forged user token -> 401" "sign_in_required|None" "$(curl -s -m 30 $API/v1/stories -H "X-API-Key: $KEY" -H 'X-User-Token: a.b.c' | problem window)"
+# The unsafe idea is a URL: the rules reject it before any model call, so no Groq quota is used.
+check "api/stories unsafe idea -> 422"  "unsafe_input|urls" "$(unsafe_idea "$ALICE" | problem category)"
+# Per-parent limit (5 an hour): ideas count even when rejected, so the 6th is refused, and only for that parent.
+for _ in 1 2 3 4; do unsafe_idea "$ALICE" >/dev/null; done
+check "api/stories 6th from parent -> limit" "visitor_limit|hour" "$(unsafe_idea "$ALICE" | problem window)"
+check "api/stories other parent unaffected" "unsafe_input|urls" "$(unsafe_idea "$BOB" | problem category)"
+check "api/stories bad JSON -> 400"     400 "$(code -X POST $WEB/api/stories -H "Cookie: $ALICE" -H 'Content-Type: application/json' -d '{bad')"
+check "api/stories/<bad id> -> 404"     404 "$(code -H "Cookie: $ALICE" $WEB/api/stories/not-a-uuid)"
+check "api/stories/<unknown> -> 404"    404 "$(code -H "Cookie: $ALICE" $WEB/api/stories/00000000-0000-4000-8000-000000000000)"
+check "DELETE api/stories/<unknown> -> 404" 404 "$(code -X DELETE -H "Cookie: $ALICE" $WEB/api/stories/00000000-0000-4000-8000-000000000000)"
+check "DELETE api/stories/<bad id> -> 404" 404 "$(code -X DELETE -H "Cookie: $ALICE" $WEB/api/stories/not-a-uuid)"
+check "shared link malformed -> 404"    404 "$(code $WEB/api/shared/not-a-token)"
+check "shared link forged -> 404"       404 "$(code $WEB/api/shared/$(printf 'a%.0s' {1..32}).1800000000.$(printf 'b%.0s' {1..32}))"
+
 echo "--- Frontend"
 check "home page 200"                   200 "$(code $WEB/)"
 check "status page 200"                 200 "$(code $WEB/status)"
 check "story page 200"                  200 "$(code $WEB/story/00000000-0000-4000-8000-000000000000)"
+check "shared story page 200"           200 "$(code $WEB/s/not-a-token)"
 check "privacy page 200"                200 "$(code $WEB/privacy)"
-# Story routes. The unsafe idea is a URL: the rules reject it before any model call, so no Groq quota is used.
-# Each run is a fresh visitor (a random benchmark-range IP), so reruns never hit the shared "unidentified" bucket.
-VISITOR="198.18.$((RANDOM % 256)).$((RANDOM % 254 + 1))"
-unsafe_idea() { curl -s -m 30 -X POST $WEB/api/stories -H 'Content-Type: application/json' -H "X-Forwarded-For: $VISITOR" -d '{"prompt":"visit www.example.com with Pip"}'; }
-problem() { python -I -c 'import json,sys;d=json.load(sys.stdin);print(d.get("code"),d.get(sys.argv[1]),sep="|")' "$1"; }
-check "api/stories unsafe idea -> 422"  "unsafe_input|urls" "$(unsafe_idea | problem category)"
-# V3 per-visitor limit (5 an hour): ideas count even when rejected, so the 6th from this visitor is refused. This
-# only passes if the web route forwards the visitor's IP (a stale dev server once didn't: restart the web container).
-for _ in 1 2 3 4; do unsafe_idea >/dev/null; done
-check "api/stories 6th from visitor -> limit" "visitor_limit|hour" "$(unsafe_idea | problem window)"
-check "api/stories bad JSON -> 400"     400 "$(code -X POST $WEB/api/stories -H 'Content-Type: application/json' -d '{bad')"
-check "api/stories/<bad id> -> 404"     404 "$(code $WEB/api/stories/not-a-uuid)"
-check "api/stories/<unknown> -> 404"    404 "$(code $WEB/api/stories/00000000-0000-4000-8000-000000000000)"
-check "DELETE api/stories/<unknown> -> 404" 404 "$(code -X DELETE $WEB/api/stories/00000000-0000-4000-8000-000000000000)"
-check "DELETE api/stories/<bad id> -> 404" 404 "$(code -X DELETE $WEB/api/stories/not-a-uuid)"
 # Voice proxy: the Vercel route holds the API key and checks the recording before forwarding it.
-heard_web=$(curl -s -m 120 -X POST $WEB/api/speech/transcribe -H 'Content-Type: audio/wav' --data-binary @$FIXTURE)
+check "web transcribe signed out -> 401" 401 "$(code -X POST $WEB/api/speech/transcribe -H 'Content-Type: audio/wav' --data-binary @$FIXTURE)"
+heard_web=$(curl -s -m 120 -X POST $WEB/api/speech/transcribe -H "Cookie: $ALICE" -H 'Content-Type: audio/wav' --data-binary @$FIXTURE)
 check "web transcribe speech -> text"   True "$(echo "$heard_web" | python -I -c 'import json,sys;print("dragon" in json.load(sys.stdin).get("text","").lower())' 2>/dev/null)"
-check "web transcribe JSON -> 415"      415 "$(code -X POST $WEB/api/speech/transcribe -H 'Content-Type: application/json' -d '{}')"
-check "web transcribe 5 MB -> 413"      413 "$(head -c 5000000 /dev/zero | curl -s -o /dev/null -w '%{http_code}' -m 60 -X POST $WEB/api/speech/transcribe -H 'Content-Type: audio/webm' --data-binary @-)"
+check "web transcribe JSON -> 415"      415 "$(code -X POST $WEB/api/speech/transcribe -H "Cookie: $ALICE" -H 'Content-Type: application/json' -d '{}')"
+check "web transcribe 5 MB -> 413"      413 "$(head -c 5000000 /dev/zero | curl -s -o /dev/null -w '%{http_code}' -m 60 -X POST $WEB/api/speech/transcribe -H "Cookie: $ALICE" -H 'Content-Type: audio/webm' --data-binary @-)"
 status=$(curl -s -m 180 $WEB/api/status)
 check "status: backend ok"  True "$(echo "$status" | python -I -c 'import json,sys;print(json.load(sys.stdin)["backend"]["ok"])')"
 check "status: gpu ok"      True "$(echo "$status" | python -I -c 'import json,sys;print(json.load(sys.stdin)["gpu"]["ok"])')"
@@ -115,6 +143,11 @@ check "status: groq ok"     True "$(echo "$status" | python -I -c 'import json,s
 leak=0; page=$(curl -s $WEB/); echo "$page" | grep -qF "$KEY" && leak=1
 for js in $(echo "$page" | grep -oE '/_next/static/[^"]+\.js' | sort -u); do curl -s "$WEB$js" | grep -qF "$KEY" && leak=1; done
 check "API key absent from browser HTML/JS" 0 "$leak"
+leak=0; for secret in "$AUTH" "$(grep -E '^USER_TOKEN_SECRET=' "$ENV_FILE" | cut -d= -f2- | tr -d '\r')"; do
+  page=$(curl -s -H "Cookie: $ALICE" $WEB/); echo "$page" | grep -qF "$secret" && leak=1
+  for js in $(echo "$page" | grep -oE '/_next/static/[^"]+\.js' | sort -u); do curl -s "$WEB$js" | grep -qF "$secret" && leak=1; done
+done
+check "sign-in secrets absent from browser" 0 "$leak"
 
 echo "--- Totals: $pass passed, $fail failed"
 

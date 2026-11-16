@@ -3,8 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST } from "@/app/api/speech/transcribe/route";
 import { MAX_AUDIO_BYTES } from "@/lib/story-types";
 
+import { signedIn, stubAuthEnv } from "./signed-in";
+
 function audio(bytes: number, type = "audio/webm;codecs=opus"): Request {
-  return new Request("http://localhost/api/speech/transcribe", {
+  return signedIn("http://localhost/api/speech/transcribe", {
     method: "POST",
     headers: { "content-type": type },
     body: new Uint8Array(bytes),
@@ -12,9 +14,18 @@ function audio(bytes: number, type = "audio/webm;codecs=opus"): Request {
 }
 
 describe("POST /api/speech/transcribe", () => {
-  beforeEach(() => {
-    vi.stubEnv("STORYWEAVER_API_URL", "https://backend.example");
-    vi.stubEnv("STORYWEAVER_API_KEY", "server-side-key");
+  beforeEach(stubAuthEnv);
+
+  it("is for signed-in parents only", async () => {
+    const upstream = vi.fn();
+    vi.stubGlobal("fetch", upstream);
+    const anonymous = new Request("http://localhost/api/speech/transcribe", {
+      method: "POST",
+      headers: { "content-type": "audio/webm" },
+      body: new Uint8Array(10),
+    });
+    expect((await POST(anonymous)).status).toBe(401);
+    expect(upstream).not.toHaveBeenCalled();
   });
   afterEach(() => {
     vi.unstubAllEnvs();

@@ -33,8 +33,10 @@ class StoryRepository:
         idempotency_key: str | None = None,
         request_hash: str | None = None,
         adaptation: str | None = None,
+        owner_id: str | None = None,
     ) -> StoryRow:
         row = StoryRow(
+            owner_id=owner_id,
             prompt_text=prompt_text,
             age_band=age_band,
             num_scenes=num_scenes,
@@ -54,6 +56,16 @@ class StoryRepository:
             .options(selectinload(StoryRow.characters), selectinload(StoryRow.scenes))
         )
         return result.scalar_one_or_none()
+
+    async def list_for_owner(self, owner_id: str, *, limit: int) -> list[StoryRow]:
+        """The owner's stories, newest first, without pages (a list, not a reader)."""
+        result = await self._session.execute(
+            select(StoryRow)
+            .where(StoryRow.owner_id == owner_id, StoryRow.status != StoryStatus.DELETING)
+            .order_by(StoryRow.created_at.desc())
+            .limit(limit)
+        )
+        return list(result.scalars())
 
     async def lock(self, story_id: uuid.UUID) -> StoryRow | None:
         """The story row, locked until the transaction ends (serialises deletion with narration saves)."""

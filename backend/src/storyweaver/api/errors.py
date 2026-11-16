@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from storyweaver.api.middleware import get_request_id
+from storyweaver.auth.user_token import SignInRequiredError
 
 PROBLEM_JSON = "application/problem+json"
 
@@ -52,6 +53,15 @@ async def _validation_exception_handler(request: Request, exc: Exception) -> JSO
     return problem_response(request, 422, "Request validation failed.", extra={"errors": errors})
 
 
+SIGN_IN_AGAIN = "Please sign in again."
+
+
+async def _sign_in_required_handler(request: Request, exc: Exception) -> JSONResponse:
+    # The reason (expired, bad signature, ...) is logged, never returned: it would help a forger.
+    logger.info("Rejected X-User-Token (request_id=%s): %s", get_request_id(request), exc)
+    return problem_response(request, 401, SIGN_IN_AGAIN, extra={"code": "sign_in_required"})
+
+
 async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     logger.exception("Unhandled error (request_id=%s)", get_request_id(request))
     return problem_response(request, 500, "An unexpected error occurred.")
@@ -60,4 +70,5 @@ async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSON
 def register_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(StarletteHTTPException, _http_exception_handler)
     app.add_exception_handler(RequestValidationError, _validation_exception_handler)
+    app.add_exception_handler(SignInRequiredError, _sign_in_required_handler)
     app.add_exception_handler(Exception, _unhandled_exception_handler)

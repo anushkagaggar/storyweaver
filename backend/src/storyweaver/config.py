@@ -20,6 +20,11 @@ class Settings(BaseSettings):
 
     storyweaver_api_key: SecretStr
     groq_api_key: SecretStr | None = None
+    # Signed-in users (V3, auth/user_token.py): the HS256 key the Vercel server signs X-User-Token with.
+    # Unset: only API-key callers (the "operator" owner) can use story routes, and share links are off.
+    user_token_secret: SecretStr | None = None
+    # How long an owner's share link works, from when it was made (auth/share_links.py). Never renewed.
+    share_link_ttl_seconds: int = Field(default=900, ge=60, le=24 * 3600)
 
     # Format "<provider>:<model id>", e.g. "groq:openai/gpt-oss-20b".
     llm_planner: str = "groq:openai/gpt-oss-20b"
@@ -81,8 +86,8 @@ class Settings(BaseSettings):
     image_sampler: str = "dpmpp_2m_karras"
     image_steps: int = Field(default=25, ge=1, le=100)
     image_guidance: float = Field(default=6.0, ge=0, le=20)
-    # Our own limits (routing/limits.py). Every visitor's stories use one Groq organisation and every
-    # picture one HF account's ZeroGPU quota, so one visitor must not use up the day for everyone.
+    # Our own limits (routing/limits.py). Every user's stories use one Groq organisation and every
+    # picture one HF account's ZeroGPU quota, so one user must not use up the day for everyone.
     visitor_stories_per_hour: int = Field(default=5, ge=1)
     visitor_stories_per_day: int = Field(default=15, ge=1)
     gpu_seconds_per_day: int = Field(default=900, ge=0)  # 15 min, below the account's ZeroGPU allowance
@@ -98,6 +103,7 @@ class Settings(BaseSettings):
 
     @field_validator(
         "groq_api_key",
+        "user_token_secret",
         "langfuse_public_key",
         "langfuse_secret_key",
         "s3_endpoint_url",

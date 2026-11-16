@@ -8,7 +8,14 @@ export default function PrivacyPage() {
   return (
     <main>
       <h1>Privacy</h1>
-      <p className="lead">StoryWeaver is a portfolio project for parents to use with their children. It has no accounts.</p>
+      <p className="lead">StoryWeaver is a portfolio project for parents to use with their children.</p>
+
+      <h2>Signing in</h2>
+      <p>
+        You sign in with Google so your stories are private to you. We ask Google only for a sign-in code,{" "}
+        <strong>not your email, name or picture</strong>, and keep just a scrambled id made from it that can&apos;t be turned
+        back into your Google account. One cookie keeps you signed in for up to 7 days; we use no tracking cookies.
+      </p>
 
       <h2>Your voice</h2>
       <p>
@@ -26,14 +33,15 @@ export default function PrivacyPage() {
 
       <h2>Story limits</h2>
       <p>
-        So everyone gets a turn, each visitor can make a few stories an hour and a day. We count them under a scrambled code
-        made from your internet address, which can&apos;t be turned back into the address, and forget the count within a day.
+        So everyone gets a turn, each person can make a few stories an hour and a day. We count them under a scrambled
+        code and forget the count within a day.
       </p>
 
       <h2>Who can read a story</h2>
       <p>
-        Anyone who has the story&apos;s web address, which contains a long random code. Stories aren&apos;t listed anywhere, so
-        only share the address with people you want to read it.
+        Only you. To show a story to someone, press &ldquo;Share this story&rdquo;: anyone with that link can read it for{" "}
+        <strong>15 minutes from when you made the link</strong>, without signing in. Opening or forwarding it never makes it
+        last longer, and they can&apos;t delete the story.
       </p>
 
       <h2>Please don&apos;t use real names</h2>
@@ -42,7 +50,8 @@ export default function PrivacyPage() {
       <h2>Deleting a story</h2>
       <p>
         Every story has a &ldquo;Delete this story&rdquo; button that removes the idea, the pages, the pictures and the
-        reading voice for good. Stories you don&apos;t delete are removed automatically 30 days after they were made.
+        reading voice for good, and stops its share links. Stories you don&apos;t delete are removed automatically 30 days
+        after they were made.
       </p>
 
       <h2>Not yet</h2>

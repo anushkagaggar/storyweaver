@@ -73,8 +73,11 @@ class AcceptedStory:
     replayed: bool
 
 
-def request_hash(prompt: str, age_band: AgeBand, num_scenes: SceneCount) -> str:
-    canonical = json.dumps({"prompt": prompt, "age_band": age_band, "num_scenes": num_scenes}, sort_keys=True)
+def request_hash(prompt: str, age_band: AgeBand, num_scenes: SceneCount, owner_id: str) -> str:
+    """The owner is part of it, so another user reusing an Idempotency-Key gets a conflict, not the story."""
+    canonical = json.dumps(
+        {"prompt": prompt, "age_band": age_band, "num_scenes": num_scenes, "owner": owner_id}, sort_keys=True
+    )
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
@@ -96,17 +99,17 @@ class StoryService:
         age_band: AgeBand,
         num_scenes: SceneCount,
         idempotency_key: str | None,
-        client_ip: str | None = None,
+        owner_id: str,
     ) -> AcceptedStory:
-        """Raises LimitExceededError when this visitor has made too many stories (counted before the safety
+        """Raises LimitExceededError when this user has made too many stories (counted before the safety
         check, so rejected ideas count too: they cost Groq quota as well)."""
-        digest = request_hash(prompt, age_band, num_scenes)
+        digest = request_hash(prompt, age_band, num_scenes, owner_id)
         if idempotency_key is not None:
             existing = await self._replay(idempotency_key, digest)
             if existing is not None:
                 return existing  # this exact request already passed the safety check (and was counted)
         if self._visitor_limiter is not None:
-            await self._visitor_limiter.acquire(client_ip)
+            await self._visitor_limiter.acquire(owner_id)
         verdict = await self._check_input(prompt)
         try:
             async with self._sessions() as session, session.begin():
@@ -117,6 +120,7 @@ class StoryService:
                     idempotency_key=idempotency_key,
                     request_hash=digest,
                     adaptation=verdict.adaptation,
+                    owner_id=owner_id,
                 )
                 job = await JobQueue(session).enqueue(
                     JobKind.PLAN, {"story_id": str(story.id)}, story_id=story.id

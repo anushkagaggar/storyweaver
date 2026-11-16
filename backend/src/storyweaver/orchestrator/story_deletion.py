@@ -47,8 +47,9 @@ class StoryDeletion:
         self._sessions = sessions
         self._blobs = blobs
 
-    async def delete(self, story_id: uuid.UUID) -> bool:
-        """Delete a story and its files. False if there was no such story.
+    async def delete(self, story_id: uuid.UUID, *, owner_id: str | None = None) -> bool:
+        """Delete a story and its files. False if there was no such story, or (with `owner_id`, as for a
+        user's request) it isn't theirs; the expiry sweep passes no owner.
 
         Raises StoryInProgressError for a story still being made, and BlobError when object storage fails (the
         story then stays DELETING and a retry finishes it).
@@ -56,7 +57,7 @@ class StoryDeletion:
         async with self._sessions() as session, session.begin():
             repo = StoryRepository(session)
             row = await repo.lock(story_id)
-            if row is None:
+            if row is None or (owner_id is not None and row.owner_id != owner_id):
                 return False
             if row.status not in DELETABLE_STATUSES:
                 raise StoryInProgressError(row.status)

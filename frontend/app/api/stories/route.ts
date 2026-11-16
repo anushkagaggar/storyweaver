@@ -1,3 +1,4 @@
+import { userHeaders } from "@/lib/auth";
 import { forwardToBackend } from "@/lib/backend";
 import { MAX_PROMPT_LENGTH, SCENE_CHOICES } from "@/lib/story-types";
 
@@ -12,16 +13,17 @@ function badRequest(detail: string): Response {
   );
 }
 
-/** The visitor's IP: Vercel's x-real-ip, else the first x-forwarded-for hop. Undefined locally without a proxy. */
-function clientIp(request: Request): string | undefined {
-  const real = request.headers.get("x-real-ip")?.trim();
-  if (real) return real.slice(0, 64);
-  const first = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-  return first ? first.slice(0, 64) : undefined;
+/** GET /api/stories -> backend GET /v1/stories: the signed-in parent's own stories, newest first. */
+export async function GET(request: Request): Promise<Response> {
+  const user = userHeaders(request);
+  if ("response" in user) return user.response;
+  return forwardToBackend("/v1/stories?limit=20", { headers: user.headers, timeoutMs: 15_000 });
 }
 
-/** POST /api/stories -> backend POST /v1/stories. Only the fields the API accepts are forwarded. */
+/** POST /api/stories -> backend POST /v1/stories, as the signed-in parent. Only the fields the API accepts go. */
 export async function POST(request: Request): Promise<Response> {
+  const user = userHeaders(request);
+  if ("response" in user) return user.response;
   let body: unknown;
   try {
     body = await request.json();
@@ -35,12 +37,8 @@ export async function POST(request: Request): Promise<Response> {
   const scenes = SCENE_CHOICES.find((n) => n === num_scenes) ?? SCENE_CHOICES[0];
 
   const key = request.headers.get("idempotency-key");
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { ...user.headers };
   if (key && IDEMPOTENCY_KEY.test(key)) headers["Idempotency-Key"] = key;
-  // The backend limits stories per visitor (backend routing/limits.py) and trusts this header because only
-  // this server holds the API key. Vercel sets x-forwarded-for itself, so a browser can't spoof it there.
-  const ip = clientIp(request);
-  if (ip) headers["X-Client-IP"] = ip;
 
   return forwardToBackend("/v1/stories", {
     method: "POST",

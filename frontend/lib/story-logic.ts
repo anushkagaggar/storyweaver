@@ -58,6 +58,8 @@ export function problemMessage(problem: Problem, retryAfterSeconds: number | nul
     return problem.detail ?? "You've made lots of stories! Please come back a little later for more.";
   }
   switch (problem.status) {
+    case 401:
+      return SIGN_IN_AGAIN;
     case 422:
       return "Please check your story idea and try again.";
     case 429:
@@ -108,6 +110,26 @@ export function parseRetryAfter(value: string | null): number | null {
 }
 
 export const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** A share link's token (backend auth/share_links.py): story id, expiry, signature. */
+export const SHARE_TOKEN_PATTERN = /^[0-9a-f]{32}\.[0-9]{10}\.[A-Za-z0-9_-]{32}$/;
+
+export const SIGN_IN_AGAIN = "Please sign in again to carry on.";
+
+/** "until 8:05 pm (15 minutes)" for a share link, or null once it has expired. */
+export function shareLinkLifetime(expiresAt: string, now: Date = new Date(), locale?: string): string | null {
+  const end = new Date(expiresAt);
+  const minutes = Math.ceil((end.getTime() - now.getTime()) / 60_000);
+  if (!Number.isFinite(minutes) || minutes <= 0) return null;
+  const time = end.toLocaleTimeString(locale, { hour: "numeric", minute: "2-digit" });
+  return `until ${time} (${minutes} ${minutes === 1 ? "minute" : "minutes"})`;
+}
+
+/** Milliseconds until a share link expires (0 once it has), for the reader to close the story on time. */
+export function msUntil(expiresAt: string, now: number = Date.now()): number {
+  const end = new Date(expiresAt).getTime();
+  return Number.isFinite(end) ? Math.max(0, end - now) : 0;
+}
 
 /** True while any page's narration or picture is still being made, so the viewer keeps polling after the text. */
 export function hasPendingMedia(story: Story): boolean {

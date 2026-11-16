@@ -1,17 +1,27 @@
-"""Story endpoints (plan §6.8): POST /v1/stories -> 202, GET/DELETE /v1/stories/{id}, GET /v1/jobs/{id}."""
+"""Story endpoints (plan §6.8): POST/GET /v1/stories, GET/DELETE /v1/stories/{id}, POST
+/v1/stories/{id}/share, GET /v1/shared/{token}, GET /v1/jobs/{id}.
 
+Every story has an owner (auth/user_token.py): the signed-in user, from X-User-Token, or the operator for
+API-key-only callers. Only the owner can read, list, share or delete a story; a share link lets anyone read
+it until the link expires.
+"""
+
+import time
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from storyweaver.api.deps import (
     BlobStoreDep,
+    OwnerDep,
     SessionsDep,
     SettingsDep,
+    ShareLinksDep,
     StoryDeletionDep,
     StoryServiceDep,
     require_api_key,
@@ -120,6 +130,27 @@ class StoryOut(BaseModel):
     updated_at: datetime
 
 
+class StorySummaryOut(BaseModel):
+    id: uuid.UUID
+    status: str
+    title: str | None  # set once the story is ready
+    created_at: datetime
+
+
+class StoryListOut(BaseModel):
+    stories: list[StorySummaryOut]
+
+
+class ShareOut(BaseModel):
+    # Read it at GET /v1/shared/{token} (the website: /s/{token}) until expires_at; it is never renewed.
+    token: str
+    expires_at: datetime
+
+
+class SharedStoryOut(StoryOut):
+    share_expires_at: datetime
+
+
 class JobOut(BaseModel):
     id: uuid.UUID
     kind: str
@@ -146,6 +177,7 @@ async def create_story(
     request: Request,
     response: Response,
     stories: StoryServiceDep,
+    owner: OwnerDep,
     idempotency_key: IdempotencyKey = None,
 ) -> CreateStoryResponse | JSONResponse:
     try:
@@ -154,8 +186,7 @@ async def create_story(
             age_band=body.age_band,
             num_scenes=body.num_scenes,
             idempotency_key=idempotency_key,
-            # Set by the Vercel route handler, the only holder of the API key (routing/limits.py).
-            client_ip=request.headers.get("x-client-ip"),
+            owner_id=owner,
         )
     except LimitExceededError as exc:
         return problem_response(
@@ -195,14 +226,97 @@ async def create_story(
     return CreateStoryResponse(story_id=accepted.story_id, job_id=accepted.job_id, status=accepted.status)
 
 
+@router.get("/stories")
+async def list_stories(
+    sessions: SessionsDep, owner: OwnerDep, limit: Annotated[int, Query(ge=1, le=50)] = 20
+) -> StoryListOut:
+    """The caller's own stories, newest first ("My stories")."""
+    async with sessions() as session:
+        rows = await StoryRepository(session).list_for_owner(owner, limit=limit)
+    return StoryListOut(
+        stories=[
+            StorySummaryOut(
+                id=row.id,
+                status=row.status,
+                title=row.title if row.status == StoryStatus.READY else None,
+                created_at=row.created_at,
+            )
+            for row in rows
+        ]
+    )
+
+
 @router.get("/stories/{story_id}")
 async def get_story(
-    story_id: uuid.UUID, sessions: SessionsDep, blobs: BlobStoreDep, settings: SettingsDep
+    story_id: uuid.UUID, sessions: SessionsDep, blobs: BlobStoreDep, settings: SettingsDep, owner: OwnerDep
 ) -> StoryOut:
+    story = await _owned_story(sessions, story_id, owner)
+    return _story_out(story, blobs, settings.audio_url_ttl_seconds)
+
+
+@router.post(
+    "/stories/{story_id}/share",
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        404: {"description": "No such story, or not the caller's"},
+        409: {"description": "The story isn't ready to read yet"},
+    },
+    response_model=ShareOut,
+)
+async def share_story(
+    story_id: uuid.UUID, request: Request, sessions: SessionsDep, owner: OwnerDep, links: ShareLinksDep
+) -> ShareOut | JSONResponse:
+    """A link anyone can read the story with, until `expires_at` (SHARE_LINK_TTL_SECONDS after now). Only the
+    owner can make one. Each call makes a new link with its own expiry; none is ever extended."""
+    story = await _owned_story(sessions, story_id, owner)
+    if story.status != StoryStatus.READY:
+        return problem_response(
+            request,
+            status.HTTP_409_CONFLICT,
+            "This story can be shared once it's ready.",
+            extra={"code": "story_not_ready"},
+        )
+    token, shared = links.make(story.id)
+    return ShareOut(token=token, expires_at=datetime.fromtimestamp(shared.expires_at, UTC))
+
+
+@router.get("/shared/{token}", responses={404: {"description": "Unknown, expired or deleted"}})
+async def get_shared_story(
+    token: str, sessions: SessionsDep, blobs: BlobStoreDep, settings: SettingsDep, links: ShareLinksDep
+) -> SharedStoryOut:
+    """Read a story through its owner's share link. Needs no sign-in (the API key still applies).
+
+    Picture and audio links expire with the share link, so a reader can't keep listening after it ends.
+    """
+    now = time.time()
+    shared = links.read(token, now)
+    if shared is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, SHARE_LINK_GONE)
+    async with sessions() as session:
+        story = await StoryRepository(session).get(shared.story_id)
+    if story is None or story.status != StoryStatus.READY:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, SHARE_LINK_GONE)
+    ttl = max(1, min(settings.audio_url_ttl_seconds, shared.seconds_left(now)))
+    out = _story_out(story, blobs, ttl)
+    return SharedStoryOut(**out.model_dump(), share_expires_at=datetime.fromtimestamp(shared.expires_at, UTC))
+
+
+SHARE_LINK_GONE = "This link has expired or the story was deleted. Ask for a new link."
+
+
+async def _owned_story(
+    sessions: async_sessionmaker[AsyncSession], story_id: uuid.UUID, owner: str
+) -> StoryRow:
+    """The story, if it exists and belongs to `owner`. Anyone else's story is "not found", the same as a
+    missing one, so ids can't be probed. Stories from before sign-in (no owner) belong to nobody."""
     async with sessions() as session:
         story = await StoryRepository(session).get(story_id)
-    if story is None or story.status == StoryStatus.DELETING:
+    if story is None or story.status == StoryStatus.DELETING or story.owner_id != owner:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Story not found.")
+    return story
+
+
+def _story_out(story: StoryRow, blobs: BlobStore | None, ttl: int) -> StoryOut:
     # Content is shown only after the output safety check has passed.
     visible = story.status == StoryStatus.READY
     return StoryOut(
@@ -217,10 +331,7 @@ async def get_story(
             CharacterOut(id=c.char_key, name=c.name, species=c.species, visual=c.visual_desc)
             for c in (story.characters if visible else [])
         ],
-        scenes=[
-            _scene_out(story, s, blobs, settings.audio_url_ttl_seconds)
-            for s in (story.scenes if visible else [])
-        ],
+        scenes=[_scene_out(story, s, blobs, ttl) for s in (story.scenes if visible else [])],
         notice=ADAPTATION_NOTICES.get(story.adaptation or "") if visible else None,
         tts_engine=story.tts_engine if visible else None,
         error=StoryError(code=story.error_code, detail=story.error_detail) if story.error_code else None,
@@ -233,16 +344,18 @@ async def get_story(
     "/stories/{story_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     responses={
-        404: {"description": "No such story (or already deleted)"},
+        404: {"description": "No such story, already deleted, or not the caller's"},
         409: {"description": "The story is still being made"},
         503: {"description": "Its files couldn't be deleted yet; retry (the story already reads as deleted)"},
     },
 )
-async def delete_story(story_id: uuid.UUID, request: Request, deletion: StoryDeletionDep) -> Response:
-    """Delete a story, its pages and its narration audio (privacy). Anyone with the story's link may do this,
-    as with reading it: the link is the only credential (docs/dpia.md)."""
+async def delete_story(
+    story_id: uuid.UUID, request: Request, deletion: StoryDeletionDep, owner: OwnerDep
+) -> Response:
+    """Delete a story, its pages, pictures and narration audio (privacy). Only its owner can; a share link
+    can't (docs/dpia.md)."""
     try:
-        deleted = await deletion.delete(story_id)
+        deleted = await deletion.delete(story_id, owner_id=owner)
     except StoryInProgressError:
         return problem_response(
             request,
@@ -296,10 +409,11 @@ def _scene_out(story: StoryRow, scene: SceneRow, blobs: BlobStore | None, ttl: i
 
 
 @router.get("/jobs/{job_id}")
-async def get_job(job_id: uuid.UUID, sessions: SessionsDep) -> JobOut:
+async def get_job(job_id: uuid.UUID, sessions: SessionsDep, owner: OwnerDep) -> JobOut:
     async with sessions() as session:
         job = await JobQueue(session).get(job_id)
-    if job is None:
+        story = await StoryRepository(session).get(job.story_id) if job and job.story_id else None
+    if job is None or story is None or story.owner_id != owner:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Job not found.")
     return JobOut(
         id=job.id,

@@ -1,3 +1,4 @@
+import { userHeaders } from "@/lib/auth";
 import { forwardToBackend } from "@/lib/backend";
 import { BodyTooLargeError, readCapped } from "@/lib/read-capped";
 import { MAX_AUDIO_BYTES } from "@/lib/story-types";
@@ -20,6 +21,9 @@ function problem(status: number, title: string, detail: string, code: string): R
  * clear message instead of a platform error.
  */
 export async function POST(request: Request): Promise<Response> {
+  // Voice input is for signed-in parents only, like making a story (it uses the same Groq quota).
+  const user = userHeaders(request);
+  if ("response" in user) return user.response;
   const type = request.headers.get("content-type") ?? "";
   if (!type.toLowerCase().startsWith("audio/")) {
     return problem(415, "Unsupported Media Type", "Please send a voice recording.", "unsupported_media_type");

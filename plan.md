@@ -329,7 +329,8 @@ storyweaver/
   - Not allowed: violence, death, romance, real people, brands, URLs or personal data.
   - The story always ends happily.
 - **Privacy:**
-  - A parent operates the app, and there are no accounts.
+  - A parent operates the app. ~~There are no accounts.~~ From V3 (16 Nov 2026) the parent **signs in with
+    Google** (scope `openid` only); only a pseudonymous id is kept, and stories are private to their owner.
   - Audio is sent to Groq Whisper and **never stored**. It isn't logged or written to disk.
   - Groq Zero Data Retention is enabled.
   - `privacy.md` discloses that Groq processes data in the US.
@@ -559,9 +560,17 @@ Every version follows the **release process in §11**. Each version lists **buil
 - [x] `PlaceholderImage` fallback when the ZeroGPU quota is exhausted; UI message. Done 15 Nov 2026, with
       `IMAGE_ENGINE=placeholder` as the default until a GPU engine lands; never stored under a content key.
 - [x] **Our own limits** (added 15 Nov 2026: every visitor's GPU time is charged to one HF account).
-      `VisitorLimiter`: 5 stories an hour, 15 a day per visitor (keyed HMAC of the IP from `X-Client-IP`).
+      `VisitorLimiter`: 5 stories an hour, 15 a day per visitor (keyed HMAC of the IP from `X-Client-IP`;
+      per signed-in owner since 16 Nov 2026, so IPs are no longer forwarded or counted).
       `GpuBudget`: 900 GPU-seconds a day across everyone, then placeholders. Wire `GpuBudget` into the
       ZeroGPU illustrator in step 4.
+- [x] **Sign-in and owners** (added 16 Nov 2026, replacing per-IP limits). Google OIDC (code + PKCE, scope
+      `openid`) on the Vercel server with `node:crypto`, no auth library; the session cookie holds a pseudonymous
+      id (HMAC of Google's `sub` under `AUTH_SECRET`). Each backend call carries a 60 s HS256 `X-User-Token`
+      (`USER_TOKEN_SECRET`, Vercel + Space Secret); `stories.owner_id` (migration 0004); read, list, share and
+      delete are owner-only (404 otherwise); API-key-only callers (MCP, scripts) are a separate "operator" owner.
+      Story limits count per owner. **Share links:** owner-made, read-only, stateless (HMAC), expire 15 min after
+      creation and are never renewed; shared media URLs expire with the link. Sign-in is required.
 - [ ] **ZeroGPU from the worker (option b).** The worker calls the Space's own Gradio endpoint `illustrate`
       over HTTP with an HF token (a new Space Secret), and the endpoint uploads the image before returning.
       Spike first: confirm ZeroGPU accepts a call from inside the Space through its `*.hf.space` URL.

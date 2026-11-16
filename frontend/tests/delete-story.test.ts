@@ -3,19 +3,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DELETE } from "@/app/api/stories/[id]/route";
 import { deleteMessage } from "@/lib/story-logic";
 
+import { signedIn, stubAuthEnv } from "./signed-in";
+
 const ID = "4b1e6b0e-2b55-4e0b-9a3c-1f0e2d3c4b5a";
 
 function call(id: string): Promise<Response> {
-  return DELETE(new Request(`http://localhost/api/stories/${id}`, { method: "DELETE" }), {
+  return DELETE(signedIn(`http://localhost/api/stories/${id}`, { method: "DELETE" }), {
     params: Promise.resolve({ id }),
   });
 }
 
 describe("DELETE /api/stories/[id]", () => {
-  beforeEach(() => {
-    vi.stubEnv("STORYWEAVER_API_URL", "https://backend.example");
-    vi.stubEnv("STORYWEAVER_API_KEY", "server-side-key");
-  });
+  beforeEach(stubAuthEnv);
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
@@ -33,6 +32,17 @@ describe("DELETE /api/stories/[id]", () => {
     expect(url).toBe(`https://backend.example/v1/stories/${ID}`);
     expect(init.method).toBe("DELETE");
     expect((init.headers as Record<string, string>)["X-API-Key"]).toBe("server-side-key");
+    expect((init.headers as Record<string, string>)["X-User-Token"]).toBeTruthy();
+  });
+
+  it("refuses a parent who isn't signed in, without calling the backend", async () => {
+    const upstream = vi.fn();
+    vi.stubGlobal("fetch", upstream);
+    const response = await DELETE(new Request(`http://localhost/api/stories/${ID}`, { method: "DELETE" }), {
+      params: Promise.resolve({ id: ID }),
+    });
+    expect(response.status).toBe(401);
+    expect(upstream).not.toHaveBeenCalled();
   });
 
   it("answers 404 for an id that isn't a UUID, without calling the backend", async () => {

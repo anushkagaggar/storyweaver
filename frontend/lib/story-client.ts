@@ -1,7 +1,16 @@
 // Browser-side calls to our own /api routes (never the backend directly; the API key stays on the server).
 
 import { deleteMessage, parseRetryAfter, problemMessage, transcribeMessage } from "@/lib/story-logic";
-import type { CreateStoryResponse, Problem, SceneChoice, Story, Transcript } from "@/lib/story-types";
+import type {
+  CreateStoryResponse,
+  Problem,
+  SceneChoice,
+  ShareLink,
+  SharedStory,
+  Story,
+  StorySummary,
+  Transcript,
+} from "@/lib/story-types";
 
 export type Failure = { ok: false; message: string; status: number; retryAfter: number | null; code?: string };
 export type Result<T> = { ok: true; value: T } | Failure;
@@ -35,13 +44,39 @@ export async function createStory(
   }
 }
 
-export async function fetchStory(id: string): Promise<Result<Story>> {
+async function getJson<T>(path: string, reconnecting = "Reconnecting…"): Promise<Result<T>> {
   try {
-    const response = await fetch(`/api/stories/${encodeURIComponent(id)}`, { cache: "no-store" });
+    const response = await fetch(path, { cache: "no-store" });
     if (!response.ok) return failure(response);
-    return { ok: true, value: (await response.json()) as Story };
+    return { ok: true, value: (await response.json()) as T };
   } catch {
-    return { ok: false, message: "Reconnecting…", status: 0, retryAfter: null };
+    return { ok: false, message: reconnecting, status: 0, retryAfter: null };
+  }
+}
+
+export function fetchStory(id: string): Promise<Result<Story>> {
+  return getJson<Story>(`/api/stories/${encodeURIComponent(id)}`);
+}
+
+/** A story through its owner's share link (no sign-in). 404 once the link has expired. */
+export function fetchSharedStory(token: string): Promise<Result<SharedStory>> {
+  return getJson<SharedStory>(`/api/shared/${encodeURIComponent(token)}`);
+}
+
+/** The signed-in parent's stories, newest first. */
+export async function listStories(): Promise<Result<StorySummary[]>> {
+  const result = await getJson<{ stories: StorySummary[] }>("/api/stories", "We couldn't load your stories.");
+  return result.ok ? { ok: true, value: result.value.stories } : result;
+}
+
+/** Make a new 15-minute read-only link to one of your stories. */
+export async function shareStory(id: string): Promise<Result<ShareLink>> {
+  try {
+    const response = await fetch(`/api/stories/${encodeURIComponent(id)}/share`, { method: "POST" });
+    if (!response.ok) return failure(response);
+    return { ok: true, value: (await response.json()) as ShareLink };
+  } catch {
+    return { ok: false, message: "We couldn't reach the storyteller. Check your connection and try again.", status: 0, retryAfter: null };
   }
 }
 

@@ -1,12 +1,12 @@
-"""Our own limits, on top of the providers' (plan V3): per-visitor story creation and a daily GPU budget.
+"""Our own limits, on top of the providers' (plan V3): per-user story creation and a daily GPU budget.
 
-Every visitor's GPU work is charged to one Hugging Face account (ZeroGPU quota) and every story to one Groq
-organisation, so one visitor must not be able to use up the day for everyone:
+Every user's GPU work is charged to one Hugging Face account (ZeroGPU quota) and every story to one Groq
+organisation, so one user must not be able to use up the day for everyone:
 
-- `VisitorLimiter`: stories per visitor per hour and per day. There are no accounts, so a visitor is a
-  client IP, forwarded by the Vercel route handler in `X-Client-IP`. Only that server holds the API key, so
-  the header can be trusted. The IP is never stored: counters are keyed by an HMAC of it (keyed with the
-  API key), so they can't be reversed by hashing all 2^32 IPv4 addresses, and they expire within a day.
+- `VisitorLimiter`: stories per user per hour and per day. A user is the story's owner: a signed-in
+  parent's pseudonymous id, or "operator" for API-key-only callers (auth/user_token.py). Counters are keyed
+  by an HMAC of it (keyed with the API key), so Redis never holds even the pseudonymous id, and they expire
+  within a day.
 - `GpuBudget`: GPU-seconds per day across everyone, kept below the account's ZeroGPU allowance. When it
   runs out, pages get the placeholder picture instead of failing.
 
@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from storyweaver.routing.quotas import DAY, HOUR, Limit
 from storyweaver.routing.store import Blocked, QuotaStore, Reservation, Usage
 
-UNIDENTIFIED = "unidentified"  # callers that send no X-Client-IP (MCP server, scripts) share one bucket
+UNIDENTIFIED = "unidentified"  # an empty identity (not expected: every story has an owner) shares one bucket
 
 
 @dataclass
@@ -53,16 +53,16 @@ class VisitorLimiter:
         self._secret = secret.encode()
         self._clock = clock
 
-    def visitor_key(self, client_ip: str | None) -> str:
-        ip = (client_ip or "").strip()
-        if not ip:
+    def visitor_key(self, identity: str | None) -> str:
+        value = (identity or "").strip()
+        if not value:
             return UNIDENTIFIED
-        return hmac.new(self._secret, ip.encode(), hashlib.sha256).hexdigest()[:32]
+        return hmac.new(self._secret, value.encode(), hashlib.sha256).hexdigest()[:32]
 
-    async def acquire(self, client_ip: str | None) -> None:
-        """Count one story for this visitor, or raise LimitExceededError."""
+    async def acquire(self, identity: str | None) -> None:
+        """Count one story for this user, or raise LimitExceededError."""
         result = await self._store.reserve(
-            f"visitor:{self.visitor_key(client_ip)}", self._limits, Usage(requests=1), self._clock()
+            f"visitor:{self.visitor_key(identity)}", self._limits, Usage(requests=1), self._clock()
         )
         if isinstance(result, Blocked):
             raise LimitExceededError(result.retry_after_seconds, _window(result.limit))
