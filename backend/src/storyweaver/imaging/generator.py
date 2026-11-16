@@ -36,7 +36,8 @@ class ImageGenerator(Protocol):
     @property
     def name(self) -> str: ...
 
-    async def generate(self, params: GenerationParams) -> bytes:
-        """PNG bytes for `params`. Raises ImageQuotaExhaustedError, ImageRejectedError or
-        ImageUnavailableError."""
+    async def generate(self, params: GenerationParams, reference: bytes | None = None) -> bytes:
+        """PNG bytes for `params`. `reference` is the IP-Adapter reference picture (PNG) whose sha256 is
+        `params.reference_sha256`; generators without an IP-Adapter ignore it. Raises
+        ImageQuotaExhaustedError, ImageRejectedError or ImageUnavailableError."""
         ...

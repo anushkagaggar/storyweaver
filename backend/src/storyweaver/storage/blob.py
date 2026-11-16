@@ -42,6 +42,10 @@ class BlobStore(Protocol):
         """Whether `key` is stored. Lets a retried job reuse work a crashed attempt already uploaded."""
         ...
 
+    async def get(self, key: str) -> bytes:
+        """The stored bytes (e.g. page 1's picture as the reference for later pages). Raises BlobError."""
+        ...
+
     def presigned_get_url(self, key: str, expires_seconds: int) -> str:
         """A URL anyone can GET until it expires. Computed locally: no network call."""
         ...
@@ -125,6 +129,20 @@ class S3BlobStore:
             raise BlobError(f"Lookup of {key} failed: {s3_error(exc)}") from exc
         return True
 
+    async def get(self, key: str) -> bytes:
+        def read() -> bytes:
+            body = self._client.get_object(Bucket=self._config.bucket, Key=key)["Body"]
+            try:
+                data: bytes = body.read()
+            finally:
+                body.close()
+            return data
+
+        try:
+            return await asyncio.to_thread(read)
+        except Exception as exc:
+            raise BlobError(f"Download of {key} failed: {s3_error(exc)}") from exc
+
     def presigned_get_url(self, key: str, expires_seconds: int) -> str:
         url: str = self._signer.generate_presigned_url(
             "get_object",
@@ -201,6 +219,11 @@ class InMemoryBlobStore:
 
     async def exists(self, key: str) -> bool:
         return key in self.objects
+
+    async def get(self, key: str) -> bytes:
+        if key not in self.objects:
+            raise BlobError(f"Download of {key} failed: not found")
+        return self.objects[key][0]
 
     def presigned_get_url(self, key: str, expires_seconds: int) -> str:
         return f"{self._base_url}/{key}?expires={expires_seconds}"

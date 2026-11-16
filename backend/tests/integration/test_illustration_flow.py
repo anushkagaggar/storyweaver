@@ -1,6 +1,8 @@
 """Plan -> per-scene image jobs -> image URLs on a real Postgres; generators and storage are fakes."""
 
 import asyncio
+import dataclasses
+import hashlib
 import json
 import uuid
 from collections.abc import AsyncIterator, Iterator
@@ -17,7 +19,7 @@ from storyweaver.config import get_settings
 from storyweaver.imaging.generator import ImageQuotaExhaustedError, ImageRejectedError, ImageUnavailableError
 from storyweaver.imaging.params import STYLE_PREFIX, GenerationParams, cache_key
 from storyweaver.jobs.queue import MAX_ATTEMPTS
-from storyweaver.jobs.worker import JobContext, Worker
+from storyweaver.jobs.worker import DeferJobError, JobContext, Worker
 from storyweaver.llm.client import LLMResult
 from storyweaver.llm.planner import StoryPlanner
 from storyweaver.orchestrator.illustration_jobs import (
@@ -59,9 +61,11 @@ class FakeGenerator:
     def __init__(self, errors: list[Exception] | None = None) -> None:
         self.errors = list(errors or [])
         self.calls: list[GenerationParams] = []
+        self.references: list[bytes | None] = []
 
-    async def generate(self, params: GenerationParams) -> bytes:
+    async def generate(self, params: GenerationParams, reference: bytes | None = None) -> bytes:
         self.calls.append(params)
+        self.references.append(reference)
         if self.errors:
             raise self.errors.pop(0)
         return PNG_BYTES
@@ -92,7 +96,12 @@ async def db(database_url: str) -> AsyncIterator[Sessions]:
     await engine.dispose()
 
 
-def _worker(sessions: Sessions, blobs: InMemoryBlobStore, generator: FakeGenerator | None) -> Worker:
+def _worker(
+    sessions: Sessions,
+    blobs: InMemoryBlobStore,
+    generator: FakeGenerator | None,
+    settings: ImageSettings = SETTINGS,
+) -> Worker:
     planner = StoryPlanner(
         StubLLM(),  # type: ignore[arg-type]
         planner_model="p",
@@ -105,7 +114,7 @@ def _worker(sessions: Sessions, blobs: InMemoryBlobStore, generator: FakeGenerat
         sessions,
         {
             JobKind.PLAN: PlanStoryJob(sessions, planner, AllowAll(), illustrate=True),  # type: ignore[arg-type]
-            JobKind.IMAGE: IllustrateSceneJob(sessions, blobs, SETTINGS, illustrator),
+            JobKind.IMAGE: IllustrateSceneJob(sessions, blobs, settings, illustrator),
         },
         on_final_failure=make_story_failure_hook(sessions),
     )
@@ -157,6 +166,61 @@ async def test_each_scene_gets_an_image_scene_one_first(
     # Every picture gets the picture-book style first, whatever the planner wrote.
     assert generator.calls[0].prompt.startswith(STYLE_PREFIX + ", ")
     assert "photo" in generator.calls[0].negative_prompt
+
+
+CONSISTENT = dataclasses.replace(SETTINGS, reference_scale=0.5, reference_model="ip-adapter@x:plus")
+
+
+async def test_later_pages_wait_for_page_one_then_use_it_as_the_reference(
+    client: TestClient, db: Sessions, blobs: InMemoryBlobStore
+) -> None:
+    generator = FakeGenerator()
+    worker = _worker(db, blobs, generator, CONSISTENT)
+    story_id = await _plan(client, worker)
+    jobs = await _image_jobs(db)
+
+    # Page 2 claimed before page 1 is drawn (e.g. page 1 is between retries): it waits, using no attempt.
+    handler = IllustrateSceneJob(db, blobs, CONSISTENT, LocalIllustrator(generator, blobs))
+    page_two = JobContext(jobs[1].id, uuid.UUID(story_id), 1, False, JobKind.IMAGE, dict(jobs[1].payload))
+    with pytest.raises(DeferJobError, match="page 1"):
+        await handler(page_two)
+    assert generator.calls == []
+
+    while await worker.run_once():
+        pass
+
+    scenes = _story(client, story_id)["scenes"]
+    assert [s["image_status"] for s in scenes] == ["ready"] * 5
+    first, *later = generator.calls
+    assert first.reference_sha256 is None and generator.references[0] is None
+    # Every later page (same main character, Pip) is drawn from page 1's stored picture...
+    assert generator.references[1:] == [PNG_BYTES] * 4
+    sha = hashlib.sha256(PNG_BYTES).hexdigest()
+    assert all(p.reference_sha256 == sha for p in later)
+    assert all((p.reference_scale, p.reference_model) == (0.5, "ip-adapter@x:plus") for p in later)
+    # ...each from its own seed (Pip's plus the page), so the pages don't all copy page 1's layout...
+    assert [p.seed - first.seed for p in generator.calls] == [0, 1, 2, 3, 4]
+    # ...and the reference is part of the cache key.
+    assert scenes[1]["image_url"].startswith(f"memory://blobs/{image_key(story_id, cache_key(later[0]))}?")
+    # Pip's fixed look is in every prompt, early, even where the planner left it out.
+    assert all("small purple dragon, round belly" in p.prompt for p in generator.calls)
+
+
+async def test_without_a_real_page_one_picture_later_pages_have_no_reference(
+    client: TestClient, db: Sessions, blobs: InMemoryBlobStore
+) -> None:
+    generator = FakeGenerator(errors=[ImageQuotaExhaustedError(3600, "ZeroGPU quota used up")])
+    worker = _worker(db, blobs, generator, CONSISTENT)
+    story_id = await _plan(client, worker)
+
+    while await worker.run_once():
+        pass
+
+    statuses = [s["image_status"] for s in _story(client, story_id)["scenes"]]
+    assert statuses == ["placeholder", "ready", "ready", "ready", "ready"]
+    # A placeholder is not Pip: later pages rely on the fixed look alone.
+    assert generator.references == [None] * 5
+    assert all(p.reference_sha256 is None for p in generator.calls)
 
 
 async def test_a_retry_reuses_an_image_a_crashed_attempt_already_stored(

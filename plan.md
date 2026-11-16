@@ -550,11 +550,20 @@ Every version follows the **release process in §11**. Each version lists **buil
 - [x] `SD15Local` (6 GB: fp16, `enable_model_cpu_offload`, VAE tiling). Done 16 Nov 2026 (`imaging/sd15.py`,
       `IMAGE_ENGINE=sd15`, the compose default): SD 1.5 pinned to a commit, 768x576, the model's safety checker
       on (a flagged picture becomes the placeholder, no retry); local Docker only, placeholders without a GPU.
-      Measured on the RTX 4050: 8–34 s a picture at 25 steps (slower while Kokoro narrates on the CPU), 22 s
-      to load. Every prompt starts with a fixed picture-book style (`imaging/params.py`): without it the
+      Measured on the RTX 4050: 8–34 s a picture at 25 steps with CPU offload (slower while Kokoro narrates
+      on the CPU), 22 s to load; ~6 s once the whole model stays on the GPU (see character consistency).
+      The model loads and warms up in the background 15 s after start-up. Every prompt starts with a fixed picture-book style (`imaging/params.py`): without it the
       planner's prompts came out as photographs. Weights fetch with retries (`python -m storyweaver.imaging.sd15`).
 - [ ] `SDXLZeroGPU` (`@spaces.GPU(duration=…)`).
-- [ ] Character consistency (§6.5): visual string, seed, IP-Adapter reference from scene 1.
+- [x] Character consistency (§6.5): visual string, seed, IP-Adapter reference from scene 1. Done 16 Nov
+      2026 for `SD15Local`: the main character's `visual` is put early in every prompt when the planner left
+      it out; later pages wait (deferred) for page 1 and, when they share its main character, use its picture
+      as an IP-Adapter Plus reference (`h94/IP-Adapter`, pinned) at strength 0.4; seed = character seed +
+      page (one fixed seed copied page 1's layout). Chosen by comparing settings on one story
+      (`backend/scripts/consistency_probe.py`). Everything now stays on the GPU (4.5 GB of 6): with CPU
+      offload the IP-Adapter pushed the api past Docker's 7.35 GB RAM and it was killed. Measured: the same
+      fox on 5 of 5 pages; text in 5 s, first picture 15 s, all five in 41 s. Still weak: secondary characters
+      and scene details (SD 1.5 with several characters, risk #14); the Florence-2 check and SDXL are next.
 - [ ] Florence-2 image self-check with up to 2 retries.
 - [x] Pipeline ordering: scene 1 TTS and image first; the other scenes queued. Done 15 Nov 2026: one `image`
       job per scene, in its own worker lane (`plan`, `tts` and `image` lanes each claim only their kind).

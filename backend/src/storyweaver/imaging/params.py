@@ -43,6 +43,7 @@ class GenerationParams:
     lora_scale: float | None = None
     reference_sha256: str | None = None  # the IP-Adapter reference image (scene 1's), by content
     reference_scale: float | None = None
+    reference_model: str | None = None  # the IP-Adapter weights (repo@revision:file)
     pipeline_version: int = PIPELINE_VERSION
 
     def to_json(self) -> str:

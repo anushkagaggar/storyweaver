@@ -36,8 +36,12 @@ class OutOfMemoryError(RuntimeError):
 class FakePipeline:
     def __init__(self, *, nsfw: bool = False, fail: Exception | None = None) -> None:
         self.calls: list[dict[str, Any]] = []
+        self.scales: list[float] = []
         self.nsfw = nsfw
         self.fail = fail
+
+    def set_ip_adapter_scale(self, scale: float) -> None:
+        self.scales.append(scale)
 
     def __call__(self, **kwargs: Any) -> SimpleNamespace:
         self.calls.append(kwargs)
@@ -70,18 +74,42 @@ async def test_draws_a_png_with_every_setting_passed_through() -> None:
 
     image = Image.open(io.BytesIO(png))
     assert image.format == "PNG" and image.size == (768, 576)
-    assert pipe.calls == [
-        {
-            "prompt": PARAMS.prompt,
-            "negative_prompt": PARAMS.negative_prompt,
-            "width": 768,
-            "height": 576,
-            "num_inference_steps": 20,
-            "guidance_scale": 6.0,
-            "generator": "generator(7)",  # the character's seed keeps it recognisable across pages
-        }
-    ]
+    call = dict(pipe.calls[0])
+    blank = call.pop("ip_adapter_image")
+    assert call == {
+        "prompt": PARAMS.prompt,
+        "negative_prompt": PARAMS.negative_prompt,
+        "width": 768,
+        "height": 576,
+        "num_inference_steps": 20,
+        "guidance_scale": 6.0,
+        "generator": "generator(7)",  # the character's seed keeps it recognisable across pages
+    }
+    # No reference: a blank image at strength 0, so the adapter adds nothing.
+    assert pipe.scales == [0.0] and blank.getextrema() == ((255, 255),) * 3
     assert loader.loaded == [(PARAMS.model, PARAMS.model_revision, "dpmpp_2m_karras")]
+
+
+async def test_a_reference_picture_is_passed_to_the_ip_adapter_at_its_strength() -> None:
+    pipe = FakePipeline()
+    engine, _ = sd15(pipe)
+    reference_image = Image.new("RGB", (768, 576), (10, 120, 60))
+    reference = io.BytesIO()
+    reference_image.save(reference, format="PNG")
+    params = dataclasses.replace(PARAMS, reference_sha256="a" * 64, reference_scale=0.5)
+
+    await engine.generate(params, reference.getvalue())
+
+    assert pipe.scales == [0.5]
+    assert pipe.calls[0]["ip_adapter_image"].getpixel((0, 0)) == (10, 120, 60)
+
+
+async def test_a_reference_and_its_hash_go_together() -> None:
+    engine, _ = sd15(FakePipeline())
+    with pytest.raises(ValueError, match="together"):
+        await engine.generate(PARAMS, b"png bytes")  # a reference the cache key wouldn't know about
+    with pytest.raises(ValueError, match="together"):
+        await engine.generate(dataclasses.replace(PARAMS, reference_sha256="a" * 64))
 
 
 async def test_the_model_is_loaded_once_and_again_only_when_the_settings_change() -> None:

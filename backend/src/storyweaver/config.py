@@ -97,6 +97,14 @@ class Settings(BaseSettings):
     image_sampler: str = "dpmpp_2m_karras"
     image_steps: int = Field(default=25, ge=1, le=100)
     image_guidance: float = Field(default=6.0, ge=0, le=20)
+    # Character consistency (plan §6.5, IMAGE_ENGINE=sd15): later pages use page 1's picture as an
+    # IP-Adapter reference at this strength (0 = only the fixed look; ~1 = copy page 1). Compared on one
+    # story (scripts/consistency_probe.py, 16 Nov 2026): 0.5 copied page 1's layout, 0.3-0.4 kept the
+    # character on 4 of 5 pages while each page showed its own scene.
+    image_reference_scale: float = Field(default=0.4, ge=0, le=1)
+    # sd15 keeps the whole model on the GPU (4.5 GB of a 6 GB card, ~6 s a picture). true moves each part
+    # there only while it runs: for smaller GPUs, but slower and ~4 GB more RAM (imaging/sd15.py).
+    image_cpu_offload: bool = False
     # Our own limits (routing/limits.py). Every user's stories use one Groq organisation and every
     # picture one HF account's ZeroGPU quota, so one user must not use up the day for everyone.
     visitor_stories_per_hour: int = Field(default=5, ge=1)

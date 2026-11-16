@@ -37,6 +37,7 @@ CHANGES = {
     "lora_scale": 0.8,
     "reference_sha256": "f" * 64,
     "reference_scale": 0.6,
+    "reference_model": "h94/IP-Adapter@abc:ip-adapter-plus_sd15.safetensors",
     "pipeline_version": 99,
 }
 

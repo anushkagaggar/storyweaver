@@ -7,6 +7,11 @@ Retries are idempotent. An image is stored under a content key (`image_key(story
 every attempt first asks the store whether that key exists: a worker that crashed after the image was made
 but before the database was updated finishes on its next attempt without generating anything again.
 
+Character consistency (plan §6.5): every prompt carries the main character's fixed look, and its seed
+(plus the page number) is fixed per story. Later pages also use page 1's picture as an IP-Adapter reference
+when they share its main character, so they wait (deferred, no attempt used) until page 1 is done. The
+reference's sha256 and strength are part of the cache key.
+
 Failures:
 - no GPU budget left (ours or ZeroGPU's): the placeholder now, no retries;
 - the model's safety checker flagged the picture: the placeholder now, no retries (same seed, same picture);
@@ -17,6 +22,8 @@ The placeholder is stored under its own per-scene key, never under a content key
 once is not stuck with it: the same settings asked for again later still generate the real image.
 """
 
+import dataclasses
+import hashlib
 import logging
 import time
 import uuid
@@ -34,7 +41,7 @@ from storyweaver.imaging.generator import (
 )
 from storyweaver.imaging.params import GenerationParams, cache_key, styled_prompt
 from storyweaver.imaging.placeholder import PlaceholderImage
-from storyweaver.jobs.worker import JobContext, PermanentJobError, RetryableJobError
+from storyweaver.jobs.worker import DeferJobError, JobContext, PermanentJobError, RetryableJobError
 from storyweaver.routing.limits import GpuBudget, LimitExceededError
 from storyweaver.storage.blob import BlobError, BlobStore, image_key, placeholder_image_key
 from storyweaver.storage.models import CharacterRow, ImageStatus, SceneRow, StoryRow, StoryStatus
@@ -54,6 +61,14 @@ class ImageSettings:
     sampler: str
     steps: int
     guidance: float
+    # Character consistency (plan §6.5): later pages use page 1's picture as an IP-Adapter reference at
+    # this strength. None turns it off (the engine has no IP-Adapter, e.g. the placeholder).
+    reference_scale: float | None = None
+    reference_model: str | None = None  # which IP-Adapter weights, part of the cache key
+
+
+# How long a later page waits before checking again whether page 1's picture is done.
+REFERENCE_WAIT_SECONDS = 5.0
 
 
 class Illustrator(Protocol):
@@ -67,7 +82,11 @@ class Illustrator(Protocol):
     @property
     def name(self) -> str: ...
 
-    async def illustrate(self, story_id: uuid.UUID, params: GenerationParams, key: str) -> None: ...
+    async def illustrate(
+        self, story_id: uuid.UUID, params: GenerationParams, key: str, reference: bytes | None = None
+    ) -> None:
+        """`reference` is the PNG whose sha256 is `params.reference_sha256` (page 1's picture), if any."""
+        ...
 
 
 class LocalIllustrator:
@@ -83,8 +102,10 @@ class LocalIllustrator:
     def generator(self) -> ImageGenerator:
         return self._generator
 
-    async def illustrate(self, story_id: uuid.UUID, params: GenerationParams, key: str) -> None:
-        png = await self._generator.generate(params)
+    async def illustrate(
+        self, story_id: uuid.UUID, params: GenerationParams, key: str, reference: bytes | None = None
+    ) -> None:
+        png = await self._generator.generate(params, reference)
         await self._blobs.put(key, png, PNG)
 
 
@@ -97,13 +118,25 @@ def main_character(scene: SceneRow, characters: list[CharacterRow]) -> Character
     return characters[0] if characters else None
 
 
+def scene_prompt(scene: SceneRow, character: CharacterRow | None) -> str:
+    """The style, then the main character's fixed look (unless the planner already wrote it in), then the
+    scene. The look comes early so CLIP's 77-token limit never cuts it."""
+    image_prompt = scene.image_prompt.strip()
+    if character is not None and character.visual_desc.strip().lower() not in image_prompt.lower():
+        image_prompt = f"{character.visual_desc.strip()}, {image_prompt}"
+    return styled_prompt(image_prompt)
+
+
 def scene_params(
     scene: SceneRow, characters: list[CharacterRow], settings: ImageSettings
 ) -> GenerationParams:
     character = main_character(scene, characters)
     return GenerationParams(
-        prompt=styled_prompt(scene.image_prompt),
-        seed=character.seed if character is not None else scene.idx,
+        prompt=scene_prompt(scene, character),
+        # The character's seed plus the page: one fixed seed per character (plan §6.5) made every page the
+        # same layout as page 1, ignoring its scene (16 Nov 2026). Its fixed look and page 1's picture
+        # (the IP-Adapter reference) keep it recognisable instead.
+        seed=(character.seed if character is not None else 0) + scene.idx,
         model=settings.model,
         model_revision=settings.model_revision,
         width=settings.width,
@@ -150,17 +183,60 @@ class IllustrateSceneJob:
                 raise PermanentJobError("not_found", f"Scene {idx} of story {story_id} is not available.")
             if scene.image_status in (ImageStatus.READY, ImageStatus.PLACEHOLDER):
                 return  # duplicate delivery
-            params = scene_params(scene, list(row.characters), self._settings)
+            characters = list(row.characters)
+            params = scene_params(scene, characters, self._settings)
+            reference_key = self._reference_key(scene, list(row.scenes), characters)
 
-        key, status = await self._make(context, story_id, idx, params)
+        reference: bytes | None = None
+        if reference_key is not None:
+            try:
+                reference = await self._blobs.get(reference_key)
+            except BlobError as exc:
+                raise RetryableJobError(str(exc)) from exc
+            params = dataclasses.replace(
+                params,
+                reference_sha256=hashlib.sha256(reference).hexdigest(),
+                reference_scale=self._settings.reference_scale,
+                reference_model=self._settings.reference_model,
+            )
+
+        key, status = await self._make(context, story_id, idx, params, reference)
         if not await self._save(story_id, idx, key, status):
             await self._discard(key)
             logger.info("Story %s was deleted while illustrating scene %d; image discarded.", story_id, idx)
             return
         logger.info("Story %s scene %d illustrated (%s).", story_id, idx, status)
 
+    def _reference_key(
+        self, scene: SceneRow, scenes: list[SceneRow], characters: list[CharacterRow]
+    ) -> str | None:
+        """Page 1's picture, when this later page has the same main character and page 1 got a real one.
+
+        Waits (a deferral, not a failed attempt) while page 1's picture is still being made. Without a
+        real page-1 picture (placeholder, failed) or for another main character, the page is drawn without
+        a reference: its seed and fixed look still apply.
+        """
+        if self._illustrator is None or self._settings.reference_scale is None:
+            return None
+        first = min(scenes, key=lambda s: s.idx)
+        if scene.idx == first.idx:
+            return None
+        if first.image_status == ImageStatus.PENDING:
+            raise DeferJobError(REFERENCE_WAIT_SECONDS, "waiting for page 1's picture")
+        if first.image_status != ImageStatus.READY or first.image_key is None:
+            return None
+        lead, first_lead = main_character(scene, characters), main_character(first, characters)
+        if lead is None or first_lead is None or lead.char_key != first_lead.char_key:
+            return None
+        return first.image_key
+
     async def _make(
-        self, context: JobContext, story_id: uuid.UUID, idx: int, params: GenerationParams
+        self,
+        context: JobContext,
+        story_id: uuid.UUID,
+        idx: int,
+        params: GenerationParams,
+        reference: bytes | None = None,
     ) -> tuple[str, ImageStatus]:
         if self._illustrator is None:
             return await self._make_placeholder(story_id, idx, params), ImageStatus.PLACEHOLDER
@@ -170,7 +246,7 @@ class IllustrateSceneJob:
             if await self._blobs.exists(key):
                 logger.info("Story %s scene %d: image already stored; reusing it.", story_id, idx)
                 return key, ImageStatus.READY
-            await self._illustrate_within_budget(story_id, params, key)
+            await self._illustrate_within_budget(story_id, params, key, reference)
             return key, ImageStatus.READY
         except BlobError as exc:
             raise RetryableJobError(str(exc)) from exc
@@ -193,12 +269,12 @@ class IllustrateSceneJob:
         return await self._make_placeholder(story_id, idx, params), ImageStatus.PLACEHOLDER
 
     async def _illustrate_within_budget(
-        self, story_id: uuid.UUID, params: GenerationParams, key: str
+        self, story_id: uuid.UUID, params: GenerationParams, key: str, reference: bytes | None = None
     ) -> None:
         """Book GPU-seconds before the call and settle the real time after; no budget means placeholder."""
         assert self._illustrator is not None  # noqa: S101  # checked by the caller
         if self._gpu_budget is None:
-            await self._illustrator.illustrate(story_id, params, key)
+            await self._illustrator.illustrate(story_id, params, key, reference)
             return
         try:
             reservation = await self._gpu_budget.reserve(self._gpu_seconds_per_image)
@@ -207,7 +283,7 @@ class IllustrateSceneJob:
         started = time.monotonic()
         used: float | None = None
         try:
-            await self._illustrator.illustrate(story_id, params, key)
+            await self._illustrator.illustrate(story_id, params, key, reference)
         except ImageQuotaExhaustedError:
             used = 0  # ZeroGPU refused it before running
             raise

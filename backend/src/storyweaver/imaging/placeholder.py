@@ -60,5 +60,5 @@ def draw_placeholder(seed: int, width: int, height: int) -> bytes:
 class PlaceholderImage:
     name = "placeholder"
 
-    async def generate(self, params: GenerationParams) -> bytes:
+    async def generate(self, params: GenerationParams, reference: bytes | None = None) -> bytes:
         return await asyncio.to_thread(draw_placeholder, params.seed, params.width, params.height)

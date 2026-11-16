@@ -17,7 +17,7 @@ from storyweaver.adapters.groq_orpheus import GroqOrpheus
 from storyweaver.adapters.groq_whisper import GroqWhisper
 from storyweaver.adapters.kokoro_tts import Kokoro
 from storyweaver.config import Settings
-from storyweaver.imaging.sd15 import SD15Local, nvidia_gpu_present
+from storyweaver.imaging.sd15 import IP_ADAPTER_MODEL, SD15Local, load_pipeline, nvidia_gpu_present
 from storyweaver.jobs.worker import Handler, Worker
 from storyweaver.llm.planner import StoryPlanner
 from storyweaver.observability.tracing import NoopTracer, Tracer
@@ -230,10 +230,13 @@ def build_illustrator(settings: Settings, blobs: BlobStore) -> Illustrator | Non
         logger.warning("IMAGE_ENGINE=sd15 but no NVIDIA GPU here; using placeholder pictures.")
         return None
     logger.info("Pictures: Stable Diffusion 1.5 on the local GPU (%s).", settings.image_model)
-    return LocalIllustrator(SD15Local(), blobs)
+    loader = functools.partial(load_pipeline, offload=settings.image_cpu_offload)
+    return LocalIllustrator(SD15Local(loader=loader), blobs)
 
 
 def image_settings(settings: Settings) -> ImageSettings:
+    # Only SD15Local has an IP-Adapter so far; with a strength of 0, later pages needn't wait for page 1.
+    consistent = settings.image_engine == "sd15" and settings.image_reference_scale > 0
     return ImageSettings(
         model=settings.image_model,
         model_revision=settings.image_model_revision,
@@ -242,6 +245,8 @@ def image_settings(settings: Settings) -> ImageSettings:
         sampler=settings.image_sampler,
         steps=settings.image_steps,
         guidance=settings.image_guidance,
+        reference_scale=settings.image_reference_scale if consistent else None,
+        reference_model=IP_ADAPTER_MODEL if consistent else None,
     )
 
 
