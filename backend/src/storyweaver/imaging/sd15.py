@@ -9,6 +9,9 @@ For local Docker on a 6 GB card (the RTX 4050), never for the ZeroGPU Space, whe
 The model's own safety checker stays on: a flagged picture raises ImageRejectedError and is thrown away.
 
 The weights (about 2.6 GB) download to the Hugging Face cache on first use, which compose mounts from D:.
+Fetch them ahead of time, so the first story isn't the one that waits:
+    docker compose -f infra/docker-compose.yml --env-file .env run --rm --no-deps api \
+        python -m storyweaver.imaging.sd15
 `diffusers`, `transformers`, `accelerate` and `torch` are in the `gpu` extra and imported only when the first
 picture is made, so the app (and CI, which has no `gpu` extra) starts without them.
 """
@@ -16,9 +19,11 @@ picture is made, so the app (and CI, which has no `gpu` extra) starts without th
 import asyncio
 import io
 import logging
+import shutil
 import threading
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from storyweaver.imaging.generator import ImageRejectedError, ImageUnavailableError
@@ -39,22 +44,53 @@ SAMPLERS: dict[str, tuple[str, dict[str, Any]]] = {
 PipelineLoader = Callable[[str, str, str], Any]
 
 
-def cuda_available() -> bool:
-    """Whether torch is installed and sees a CUDA GPU. False rather than an error when torch is missing."""
-    try:
-        import torch
-    except ImportError:
-        return False
-    return bool(torch.cuda.is_available())
+def nvidia_gpu_present() -> bool:
+    """A cheap start-up check for an NVIDIA GPU: its device files, as Docker's GPU support mounts them.
+
+    It must not import torch: that takes several seconds, and Gradio's `launch()` reports "Cannot find empty
+    port" when the server isn't up within about 5 s (seen 16 Nov 2026). torch confirms CUDA on first use.
+    """
+    return Path("/dev/nvidiactl").exists() or shutil.which("nvidia-smi") is not None
+
+
+# Only what an fp16 pipeline loads: 2.6 GB instead of the repo's ~45 GB of fp32, .ckpt and EMA files.
+WEIGHT_FILES = ["*.json", "*.txt", "*.fp16.safetensors"]
+DOWNLOAD_ATTEMPTS = 4
+
+
+def download_weights(model: str, revision: str, *, attempts: int = DOWNLOAD_ATTEMPTS) -> str:
+    """The local folder holding the model's fp16 weights, downloading what's missing first.
+
+    The first download is 2.6 GB and Hugging Face's CDN can drop a connection part-way (seen 16 Nov 2026), so
+    it is retried here with backoff; each try resumes from the files already complete. Raises
+    ImageUnavailableError when every try fails, so the job retries later rather than spinning.
+    """
+    from huggingface_hub import snapshot_download
+
+    for attempt in range(1, attempts + 1):
+        try:
+            path: str = snapshot_download(model, revision=revision, allow_patterns=WEIGHT_FILES)
+            return path
+        except Exception as exc:  # network, CDN and cache errors all surface differently
+            if attempt == attempts:
+                raise ImageUnavailableError(f"could not download {model}: {exc}") from exc
+            wait = 5 * 2**attempt
+            logger.warning(
+                "Downloading %s failed (try %d of %d); again in %d s: %s", model, attempt, attempts, wait, exc
+            )
+            time.sleep(wait)
+    raise AssertionError("unreachable")
 
 
 def load_pipeline(model: str, revision: str, sampler: str) -> Any:
     import torch
     from diffusers import StableDiffusionPipeline, schedulers
 
+    if not torch.cuda.is_available():
+        raise ImageUnavailableError("torch sees no CUDA GPU")
     scheduler_name, options = SAMPLERS[sampler]
     pipe = StableDiffusionPipeline.from_pretrained(
-        model, revision=revision, torch_dtype=torch.float16, variant="fp16", use_safetensors=True
+        download_weights(model, revision), dtype=torch.float16, variant="fp16", use_safetensors=True
     )
     pipe.scheduler = getattr(schedulers, scheduler_name).from_config(pipe.scheduler.config, **options)
     pipe.enable_model_cpu_offload()
@@ -156,3 +192,12 @@ class SD15Local:
                 params.steps,
             )
             return to_png(result.images[0])
+
+
+if __name__ == "__main__":
+    # Fetch the configured model's weights into the HF cache (see the module docstring).
+    from storyweaver.config import SD15_DEFAULTS
+
+    logging.basicConfig(level=logging.INFO)
+    model, revision = str(SD15_DEFAULTS["image_model"]), str(SD15_DEFAULTS["image_model_revision"])
+    print(f"Weights for {model}@{revision[:12]} are in {download_weights(model, revision)}")

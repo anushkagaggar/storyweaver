@@ -15,7 +15,7 @@ from story_samples import make_planned_story
 from storyweaver.api.main import create_app
 from storyweaver.config import get_settings
 from storyweaver.imaging.generator import ImageQuotaExhaustedError, ImageRejectedError, ImageUnavailableError
-from storyweaver.imaging.params import GenerationParams, cache_key
+from storyweaver.imaging.params import STYLE_PREFIX, GenerationParams, cache_key
 from storyweaver.jobs.queue import MAX_ATTEMPTS
 from storyweaver.jobs.worker import JobContext, Worker
 from storyweaver.llm.client import LLMResult
@@ -153,7 +153,10 @@ async def test_each_scene_gets_an_image_scene_one_first(
     assert story["scenes"][0]["image_url"].startswith(f"memory://blobs/{key}?expires=")
     assert blobs.objects[key] == (PNG_BYTES, "image/png")
     # Scene 1 is centred on its first declared character: that character's seed keeps it recognisable.
-    assert generator.calls[0].seed != 0 and generator.calls[0].prompt
+    assert generator.calls[0].seed != 0
+    # Every picture gets the picture-book style first, whatever the planner wrote.
+    assert generator.calls[0].prompt.startswith(STYLE_PREFIX + ", ")
+    assert "photo" in generator.calls[0].negative_prompt
 
 
 async def test_a_retry_reuses_an_image_a_crashed_attempt_already_stored(

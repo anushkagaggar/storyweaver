@@ -9,7 +9,7 @@ from PIL import Image
 from storyweaver.config import SD15_DEFAULTS, Settings
 from storyweaver.imaging.generator import ImageRejectedError, ImageUnavailableError
 from storyweaver.imaging.params import GenerationParams
-from storyweaver.imaging.sd15 import SD15Local
+from storyweaver.imaging.sd15 import SD15Local, download_weights
 from storyweaver.orchestrator.illustration_jobs import LocalIllustrator
 from storyweaver.services import build_illustrator
 
@@ -121,6 +121,35 @@ async def test_an_unknown_sampler_fails_loudly() -> None:
     assert loader.loaded == []
 
 
+def test_a_dropped_download_is_retried_and_only_fp16_files_are_fetched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, Any]] = []
+
+    def snapshot_download(model: str, **kwargs: Any) -> str:
+        calls.append(kwargs)
+        if len(calls) < 3:
+            raise RuntimeError("CAS Client Error: error sending request")
+        return "/cache/sd15"
+
+    monkeypatch.setattr("huggingface_hub.snapshot_download", snapshot_download)
+    monkeypatch.setattr("storyweaver.imaging.sd15.time.sleep", lambda _: None)
+
+    assert download_weights("m", "rev") == "/cache/sd15"
+    assert len(calls) == 3
+    assert calls[0] == {"revision": "rev", "allow_patterns": ["*.json", "*.txt", "*.fp16.safetensors"]}
+
+
+def test_a_download_that_keeps_failing_is_worth_a_later_retry(monkeypatch: pytest.MonkeyPatch) -> None:
+    def snapshot_download(model: str, **kwargs: Any) -> str:
+        raise RuntimeError("CDN down")
+
+    monkeypatch.setattr("huggingface_hub.snapshot_download", snapshot_download)
+    monkeypatch.setattr("storyweaver.imaging.sd15.time.sleep", lambda _: None)
+    with pytest.raises(ImageUnavailableError, match="could not download"):
+        download_weights("m", "rev", attempts=2)
+
+
 def _settings(**values: Any) -> Settings:
     return Settings(storyweaver_api_key="k" * 32, **values)  # type: ignore[arg-type]
 
@@ -145,10 +174,10 @@ def test_sizes_must_be_multiples_of_eight() -> None:
 
 def test_the_illustrator_is_sd15_only_locally_with_a_gpu(monkeypatch: pytest.MonkeyPatch) -> None:
     blobs: Any = object()
-    monkeypatch.setattr("storyweaver.services.cuda_available", lambda: True)
+    monkeypatch.setattr("storyweaver.services.nvidia_gpu_present", lambda: True)
     assert isinstance(build_illustrator(_settings(image_engine="sd15"), blobs), LocalIllustrator)
     assert build_illustrator(_settings(image_engine="placeholder"), blobs) is None
     assert build_illustrator(_settings(image_engine="sd15", app_env="prod"), blobs) is None
 
-    monkeypatch.setattr("storyweaver.services.cuda_available", lambda: False)
+    monkeypatch.setattr("storyweaver.services.nvidia_gpu_present", lambda: False)
     assert build_illustrator(_settings(image_engine="sd15"), blobs) is None  # placeholders, not CPU minutes

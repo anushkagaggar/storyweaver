@@ -11,7 +11,19 @@ import json
 from dataclasses import asdict, dataclass
 
 PIPELINE_VERSION = 1
-NEGATIVE_PROMPT = "text, words, letters, watermark, signature, scary, dark, blurry, deformed, extra limbs"
+# The look of every picture, put first so it is never cut by CLIP's 77-token limit. The planner is asked for a
+# children's-book style too, but often leaves it out, and SD 1.5's default is then a photograph (16 Nov 2026).
+STYLE_PREFIX = (
+    "children's picture book illustration, soft watercolour, gentle pastel colours, cute, simple shapes"
+)
+NEGATIVE_PROMPT = (
+    "photo, photograph, photorealistic, realistic, 3d render, "
+    "text, words, letters, watermark, signature, scary, dark, blurry, deformed, extra limbs"
+)
+
+
+def styled_prompt(image_prompt: str) -> str:
+    return f"{STYLE_PREFIX}, {image_prompt}"
 
 
 @dataclass(frozen=True)

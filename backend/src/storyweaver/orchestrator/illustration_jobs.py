@@ -32,7 +32,7 @@ from storyweaver.imaging.generator import (
     ImageRejectedError,
     ImageUnavailableError,
 )
-from storyweaver.imaging.params import GenerationParams, cache_key
+from storyweaver.imaging.params import GenerationParams, cache_key, styled_prompt
 from storyweaver.imaging.placeholder import PlaceholderImage
 from storyweaver.jobs.worker import JobContext, PermanentJobError, RetryableJobError
 from storyweaver.routing.limits import GpuBudget, LimitExceededError
@@ -98,7 +98,7 @@ def scene_params(
 ) -> GenerationParams:
     character = main_character(scene, characters)
     return GenerationParams(
-        prompt=scene.image_prompt,
+        prompt=styled_prompt(scene.image_prompt),
         seed=character.seed if character is not None else scene.idx,
         model=settings.model,
         model_revision=settings.model_revision,

@@ -24,6 +24,9 @@ services:
       # Real pictures on the local GPU (imaging/sd15.py); SD 1.5's weights go to the same mounted cache on D:.
       # Set IMAGE_ENGINE=placeholder in .env for fast runs without the GPU.
       IMAGE_ENGINE: ${IMAGE_ENGINE:-sd15}
+      # Plain HTTPS model downloads: HF's Xet CDN stalled and dropped the 2.6 GB SD 1.5 fetch here (16 Nov 2026),
+      # while plain downloads ran steadily and resume after a failure.
+      HF_HUB_DISABLE_XET: "1"
     ports:
       - "7860:7860"
     volumes:

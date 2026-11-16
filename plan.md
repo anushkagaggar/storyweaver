@@ -550,6 +550,9 @@ Every version follows the **release process in §11**. Each version lists **buil
 - [x] `SD15Local` (6 GB: fp16, `enable_model_cpu_offload`, VAE tiling). Done 16 Nov 2026 (`imaging/sd15.py`,
       `IMAGE_ENGINE=sd15`, the compose default): SD 1.5 pinned to a commit, 768x576, the model's safety checker
       on (a flagged picture becomes the placeholder, no retry); local Docker only, placeholders without a GPU.
+      Measured on the RTX 4050: 8–34 s a picture at 25 steps (slower while Kokoro narrates on the CPU), 22 s
+      to load. Every prompt starts with a fixed picture-book style (`imaging/params.py`): without it the
+      planner's prompts came out as photographs. Weights fetch with retries (`python -m storyweaver.imaging.sd15`).
 - [ ] `SDXLZeroGPU` (`@spaces.GPU(duration=…)`).
 - [ ] Character consistency (§6.5): visual string, seed, IP-Adapter reference from scene 1.
 - [ ] Florence-2 image self-check with up to 2 retries.

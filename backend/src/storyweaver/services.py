@@ -15,7 +15,7 @@ from storyweaver.adapters.groq_orpheus import GroqOrpheus
 from storyweaver.adapters.groq_whisper import GroqWhisper
 from storyweaver.adapters.kokoro_tts import Kokoro
 from storyweaver.config import Settings
-from storyweaver.imaging.sd15 import SD15Local, cuda_available
+from storyweaver.imaging.sd15 import SD15Local, nvidia_gpu_present
 from storyweaver.jobs.worker import Handler, Worker
 from storyweaver.llm.planner import StoryPlanner
 from storyweaver.observability.tracing import NoopTracer, Tracer
@@ -193,8 +193,8 @@ def build_illustrator(settings: Settings, blobs: BlobStore) -> Illustrator | Non
     if settings.app_env == "prod":
         logger.warning("IMAGE_ENGINE=sd15 is for local Docker only; using placeholder pictures.")
         return None
-    if not cuda_available():
-        logger.warning("IMAGE_ENGINE=sd15 but no CUDA GPU (or no torch) here; using placeholder pictures.")
+    if not nvidia_gpu_present():
+        logger.warning("IMAGE_ENGINE=sd15 but no NVIDIA GPU here; using placeholder pictures.")
         return None
     logger.info("Pictures: Stable Diffusion 1.5 on the local GPU (%s).", settings.image_model)
     return LocalIllustrator(SD15Local(), blobs)
