@@ -37,7 +37,14 @@ dependencies = [
 [project.optional-dependencies]
 # ZeroGPU supports torch 2.8.0–2.13.0 (HF docs, checked 13 Oct 2026). On Windows, PyPI torch is CPU-only;
 # use the Docker image for local GPU work.
-gpu = ["torch==2.13.0"]
+gpu = [
+    "torch==2.13.0",
+    # Pictures (V3, imaging/sd15.py): diffusers runs Stable Diffusion, transformers its CLIP text encoder and
+    # safety checker, accelerate the CPU offload that fits SD 1.5 in 6 GB. All Apache-2.0.
+    "diffusers>=0.35",
+    "transformers>=4.56",
+    "accelerate>=1.10",
+]
 
 [dependency-groups]
 dev = [
@@ -90,5 +97,8 @@ module = ["boto3", "boto3.*", "botocore", "botocore.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = ["spaces", "spaces.*", "torch", "torch.*", "faster_whisper", "faster_whisper.*", "kokoro_onnx", "kokoro_onnx.*"]
+module = [
+    "spaces", "spaces.*", "torch", "torch.*", "faster_whisper", "faster_whisper.*", "kokoro_onnx", "kokoro_onnx.*",
+    "diffusers", "diffusers.*",
+]
 ignore_missing_imports = true

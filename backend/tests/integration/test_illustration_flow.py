@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from story_samples import make_planned_story
 from storyweaver.api.main import create_app
 from storyweaver.config import get_settings
-from storyweaver.imaging.generator import ImageQuotaExhaustedError, ImageUnavailableError
+from storyweaver.imaging.generator import ImageQuotaExhaustedError, ImageRejectedError, ImageUnavailableError
 from storyweaver.imaging.params import GenerationParams, cache_key
 from storyweaver.jobs.queue import MAX_ATTEMPTS
 from storyweaver.jobs.worker import JobContext, Worker
@@ -208,6 +208,22 @@ async def test_no_gpu_budget_uses_the_placeholder_at_once(
     assert (await _image_jobs(db))[0].status == JobStatus.SUCCEEDED  # no retries spent on a dead quota
     # The placeholder is not stored under the real image's key, so a later request can still make it.
     assert image_key(story_id, cache_key(generator.calls[0])) not in blobs.objects
+
+
+async def test_a_picture_the_safety_checker_flags_is_replaced_by_the_placeholder_without_retries(
+    client: TestClient, db: Sessions, blobs: InMemoryBlobStore
+) -> None:
+    generator = FakeGenerator(errors=[ImageRejectedError("flagged by the model's safety checker")])
+    worker = _worker(db, blobs, generator)
+    story_id = await _plan(client, worker)
+
+    assert await worker.run_once(frozenset({JobKind.IMAGE})) is True
+
+    scene = _story(client, story_id)["scenes"][0]
+    assert scene["image_status"] == "placeholder"
+    assert (await _image_jobs(db))[0].status == JobStatus.SUCCEEDED  # same seed, same picture: no retry
+    assert len(generator.calls) == 1
+    assert image_key(story_id, cache_key(generator.calls[0])) not in blobs.objects  # nothing flagged is kept
 
 
 async def test_when_the_daily_gpu_budget_is_spent_pages_get_the_placeholder(

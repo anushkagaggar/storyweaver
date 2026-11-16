@@ -2,8 +2,17 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Stable Diffusion 1.5 (CreativeML OpenRAIL-M, not gated), pinned to a commit (checked 16 Nov 2026).
+# 768x576 keeps the 4:3 page shape at a size SD 1.5 handles well.
+SD15_DEFAULTS: dict[str, str | int] = {
+    "image_model": "stable-diffusion-v1-5/stable-diffusion-v1-5",
+    "image_model_revision": "451f4fe16113bff5a5d2269ed5ad43b0592e9a14",  # pragma: allowlist secret
+    "image_width": 768,
+    "image_height": 576,
+}
 
 
 class Settings(BaseSettings):
@@ -76,13 +85,15 @@ class Settings(BaseSettings):
     # Lifetime of the presigned audio and image URLs in GET /v1/stories/{id}. The UI re-polls for fresh ones.
     audio_url_ttl_seconds: int = Field(default=3600, ge=60, le=7 * 24 * 3600)
     # Illustrations (plan V3), stored in the same bucket as the audio. "placeholder" draws a soft wordless
-    # picture for every page (no GPU); "none" turns images off. GPU engines arrive in V3 steps 3-4.
-    image_engine: Literal["none", "placeholder"] = "placeholder"
-    # Generation settings. Every one is part of the image cache key (imaging/params.py).
+    # picture for every page (no GPU); "sd15" draws real pictures with Stable Diffusion 1.5 on this machine's
+    # NVIDIA GPU (imaging/sd15.py; local Docker only, never on the ZeroGPU Space); "none" turns images off.
+    image_engine: Literal["none", "placeholder", "sd15"] = "placeholder"
+    # Generation settings. Every one is part of the image cache key (imaging/params.py). With
+    # IMAGE_ENGINE=sd15, the model, its revision and the size default to SD 1.5's (see _engine_defaults).
     image_model: str = "stabilityai/stable-diffusion-xl-base-1.0"
     image_model_revision: str = "main"
-    image_width: int = Field(default=1152, ge=256, le=2048)
-    image_height: int = Field(default=896, ge=256, le=2048)
+    image_width: int = Field(default=1152, ge=256, le=2048, multiple_of=8)
+    image_height: int = Field(default=896, ge=256, le=2048, multiple_of=8)
     image_sampler: str = "dpmpp_2m_karras"
     image_steps: int = Field(default=25, ge=1, le=100)
     image_guidance: float = Field(default=6.0, ge=0, le=20)
@@ -147,6 +158,19 @@ class Settings(BaseSettings):
             return None
         value = value.strip().rstrip("/")
         return value if "://" in value else f"https://{value}"
+
+    @model_validator(mode="after")
+    def _engine_defaults(self) -> "Settings":
+        """SD 1.5 settings for IMAGE_ENGINE=sd15, unless IMAGE_MODEL / _REVISION / _WIDTH / _HEIGHT are set.
+
+        The plain defaults are SDXL's (1152x896), which SD 1.5 draws badly (it was trained at 512) and which
+        don't fit in 6 GB. The revision is pinned so the image cache key names exact weights.
+        """
+        if self.image_engine == "sd15":
+            for name, value in SD15_DEFAULTS.items():
+                if name not in self.model_fields_set:
+                    setattr(self, name, value)
+        return self
 
     @property
     def allowed_origin_list(self) -> list[str]:

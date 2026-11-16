@@ -9,6 +9,7 @@ but before the database was updated finishes on its next attempt without generat
 
 Failures:
 - no GPU budget left (ours or ZeroGPU's): the placeholder now, no retries;
+- the model's safety checker flagged the picture: the placeholder now, no retries (same seed, same picture);
 - a transient GPU or endpoint failure: retried with backoff, the placeholder on the last attempt;
 - object storage failing: retried; on the final failure the page is marked image_failed and reads fine.
 
@@ -28,6 +29,7 @@ from storyweaver.imaging.generator import (
     PNG,
     ImageGenerator,
     ImageQuotaExhaustedError,
+    ImageRejectedError,
     ImageUnavailableError,
 )
 from storyweaver.imaging.params import GenerationParams, cache_key
@@ -171,6 +173,12 @@ class IllustrateSceneJob:
         except ImageQuotaExhaustedError as exc:
             logger.warning(
                 "Story %s scene %d: no GPU budget (%s); using the placeholder.", story_id, idx, exc
+            )
+        except ImageRejectedError:
+            logger.warning(
+                "Story %s scene %d: the picture failed the safety check; using the placeholder.",
+                story_id,
+                idx,
             )
         except ImageUnavailableError as exc:
             if not context.is_last_attempt:

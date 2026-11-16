@@ -15,10 +15,16 @@ from storyweaver.adapters.groq_orpheus import GroqOrpheus
 from storyweaver.adapters.groq_whisper import GroqWhisper
 from storyweaver.adapters.kokoro_tts import Kokoro
 from storyweaver.config import Settings
+from storyweaver.imaging.sd15 import SD15Local, cuda_available
 from storyweaver.jobs.worker import Handler, Worker
 from storyweaver.llm.planner import StoryPlanner
 from storyweaver.observability.tracing import NoopTracer, Tracer
-from storyweaver.orchestrator.illustration_jobs import IllustrateSceneJob, ImageSettings
+from storyweaver.orchestrator.illustration_jobs import (
+    IllustrateSceneJob,
+    Illustrator,
+    ImageSettings,
+    LocalIllustrator,
+)
 from storyweaver.orchestrator.narration import Narrator
 from storyweaver.orchestrator.narration_jobs import NarrateSceneJob, StoryNarration
 from storyweaver.orchestrator.story_deletion import RetentionSweeper, StoryDeletion
@@ -162,14 +168,36 @@ def build_services(settings: Settings) -> Services:
         if narration is not None and services.blobs is not None:
             handlers[JobKind.TTS] = NarrateSceneJob(services.sessions, narration.narrator, services.blobs)
         if illustrate and services.blobs is not None:
-            # IMAGE_ENGINE=placeholder: no illustrator, every page gets the placeholder (GPU in V3 step 3-4).
+            # No illustrator (IMAGE_ENGINE=placeholder, or no usable GPU): every page gets the placeholder.
             handlers[JobKind.IMAGE] = IllustrateSceneJob(
-                services.sessions, services.blobs, image_settings(settings), illustrator=None
+                services.sessions,
+                services.blobs,
+                image_settings(settings),
+                illustrator=build_illustrator(settings, services.blobs),
             )
         services.worker = Worker(
             services.sessions, handlers, on_final_failure=make_story_failure_hook(services.sessions)
         )
     return services
+
+
+def build_illustrator(settings: Settings, blobs: BlobStore) -> Illustrator | None:
+    """The picture maker for IMAGE_ENGINE, or None for placeholders.
+
+    sd15 needs a CUDA GPU in this process. On the ZeroGPU Space there is none outside a `@spaces.GPU` call
+    (and its CUDA checks are patched), so APP_ENV=prod never uses it: GPU pictures there are step 4's job.
+    Without a GPU it logs why and falls back to placeholders rather than drawing for minutes on the CPU.
+    """
+    if settings.image_engine != "sd15":
+        return None
+    if settings.app_env == "prod":
+        logger.warning("IMAGE_ENGINE=sd15 is for local Docker only; using placeholder pictures.")
+        return None
+    if not cuda_available():
+        logger.warning("IMAGE_ENGINE=sd15 but no CUDA GPU (or no torch) here; using placeholder pictures.")
+        return None
+    logger.info("Pictures: Stable Diffusion 1.5 on the local GPU (%s).", settings.image_model)
+    return LocalIllustrator(SD15Local(), blobs)
 
 
 def image_settings(settings: Settings) -> ImageSettings:

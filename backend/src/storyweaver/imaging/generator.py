@@ -27,10 +27,16 @@ class ImageUnavailableError(ImageError):
     """A transient failure (GPU busy, endpoint down, timeout): worth a retry with backoff."""
 
 
+class ImageRejectedError(ImageError):
+    """The model's own safety checker flagged the picture. The same settings would draw it again, so
+    retrying won't help: use the placeholder. The picture itself is discarded, never stored."""
+
+
 class ImageGenerator(Protocol):
     @property
     def name(self) -> str: ...
 
     async def generate(self, params: GenerationParams) -> bytes:
-        """PNG bytes for `params`. Raises ImageQuotaExhaustedError or ImageUnavailableError."""
+        """PNG bytes for `params`. Raises ImageQuotaExhaustedError, ImageRejectedError or
+        ImageUnavailableError."""
         ...

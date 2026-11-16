@@ -547,7 +547,10 @@ Every version follows the **release process in §11**. Each version lists **buil
 
 ### V3: Illustrated Storybook, text/speech → image (weeks 5–6)
 **Tasks**
-- [ ] `SDXLZeroGPU` (`@spaces.GPU(duration=…)`) and `SD15Local` (6 GB: fp16, `enable_model_cpu_offload`, VAE tiling).
+- [x] `SD15Local` (6 GB: fp16, `enable_model_cpu_offload`, VAE tiling). Done 16 Nov 2026 (`imaging/sd15.py`,
+      `IMAGE_ENGINE=sd15`, the compose default): SD 1.5 pinned to a commit, 768x576, the model's safety checker
+      on (a flagged picture becomes the placeholder, no retry); local Docker only, placeholders without a GPU.
+- [ ] `SDXLZeroGPU` (`@spaces.GPU(duration=…)`).
 - [ ] Character consistency (§6.5): visual string, seed, IP-Adapter reference from scene 1.
 - [ ] Florence-2 image self-check with up to 2 retries.
 - [x] Pipeline ordering: scene 1 TTS and image first; the other scenes queued. Done 15 Nov 2026: one `image`

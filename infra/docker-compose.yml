@@ -21,6 +21,9 @@ services:
       TTS_ENGINE: ${TTS_ENGINE:-auto}
       # Kokoro's ONNX files live in the mounted HF cache on D:, so rebuilds don't re-download them.
       KOKORO_DIR: /home/app/.cache/huggingface/storyweaver-kokoro
+      # Real pictures on the local GPU (imaging/sd15.py); SD 1.5's weights go to the same mounted cache on D:.
+      # Set IMAGE_ENGINE=placeholder in .env for fast runs without the GPU.
+      IMAGE_ENGINE: ${IMAGE_ENGINE:-sd15}
     ports:
       - "7860:7860"
     volumes:
