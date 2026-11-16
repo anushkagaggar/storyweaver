@@ -39,8 +39,7 @@ main {
 }
 
 .lead,
-.hint,
-.setting {
+.hint {
   color: var(--muted);
 }
 

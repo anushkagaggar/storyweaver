@@ -37,8 +37,8 @@ export function StoryBook({ story }: { story: Story }) {
   return (
     <article className="storybook" aria-roledescription="storybook">
       <header>
+        {/* The setting is the planner's note for the pictures, not story text, so it isn't shown. */}
         <h1>{story.title}</h1>
-        {story.setting && <p className="setting">{story.setting}</p>}
       </header>
 
       <section className="page" aria-live="polite" aria-label={`Page ${page + 1} of ${last + 1}`}>

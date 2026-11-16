@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import Link from "next/link";
+import { PrivacyBackLink } from "@/components/PrivacyBackLink";
 
 export const metadata: Metadata = { title: "Privacy · StoryWeaver" };
 
@@ -58,7 +58,7 @@ export default function PrivacyPage() {
       <p>This project hasn&apos;t had a legal review and isn&apos;t offered to the public as a service.</p>
 
       <p className="again">
-        <Link href="/">Back to making a story</Link>
+        <PrivacyBackLink />
       </p>
     </main>
   );

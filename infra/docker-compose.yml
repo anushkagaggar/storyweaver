@@ -60,6 +60,9 @@ services:
     volumes:
       - ../frontend:/app
       - web_node_modules:/app/node_modules
+      # Keep Next's build and dev log off the Windows bind mount: the poller saw each log write as a code change
+      # and reloaded the page, which wrote another log line (an endless reload loop).
+      - web_next:/app/.next
     depends_on:
       - api
 
@@ -106,3 +109,4 @@ volumes:
   pg_data:
   s3_data:
   web_node_modules:
+  web_next:
