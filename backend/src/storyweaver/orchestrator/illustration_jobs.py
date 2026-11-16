@@ -79,6 +79,10 @@ class LocalIllustrator:
     def name(self) -> str:
         return self._generator.name
 
+    @property
+    def generator(self) -> ImageGenerator:
+        return self._generator
+
     async def illustrate(self, story_id: uuid.UUID, params: GenerationParams, key: str) -> None:
         png = await self._generator.generate(params)
         await self._blobs.put(key, png, PNG)

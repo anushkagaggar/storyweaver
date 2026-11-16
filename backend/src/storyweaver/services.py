@@ -1,7 +1,9 @@
 """Composition root: builds the app's long-lived services from settings, and tears them down."""
 
 import asyncio
+import functools
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import timedelta
 
@@ -42,6 +44,10 @@ from storyweaver.storage.models import JobKind
 
 logger = logging.getLogger(__name__)
 
+# Gradio's launch() gives the server about 5 s to come up and reports "Cannot find empty port" if it is late.
+# Loading the picture model holds Python's GIL for seconds, so it starts only once the server is surely up.
+WARM_UP_DELAY_SECONDS = 15.0
+
 
 @dataclass
 class Services:
@@ -57,20 +63,42 @@ class Services:
     sweeper: RetentionSweeper | None = None
     worker: Worker | None = None
     tracer: Tracer = field(default_factory=NoopTracer)
+    # Loads the picture model in the background after start-up (IMAGE_ENGINE=sd15).
+    warm_up: Callable[[], Awaitable[None]] | None = None
     _worker_task: asyncio.Task[None] | None = field(default=None, repr=False)
     _sweeper_task: asyncio.Task[None] | None = field(default=None, repr=False)
+    _warm_up_task: asyncio.Task[None] | None = field(default=None, repr=False)
     _stop: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
 
-    def start_worker(self) -> None:
+    def start_worker(self, warm_up_delay_seconds: float = WARM_UP_DELAY_SECONDS) -> None:
         if self.worker is not None and self._worker_task is None:
             self._worker_task = asyncio.create_task(self.worker.run_forever(self._stop), name="job-worker")
         if self.sweeper is not None and self._sweeper_task is None:
             self._sweeper_task = asyncio.create_task(
                 self.sweeper.run_forever(self._stop), name="story-expiry"
             )
+        if self.warm_up is not None and self._warm_up_task is None:
+            self._warm_up_task = asyncio.create_task(
+                self._warm_up_later(self.warm_up, warm_up_delay_seconds), name="picture-warm-up"
+            )
+
+    async def _warm_up_later(self, warm_up: Callable[[], Awaitable[None]], delay_seconds: float) -> None:
+        """Wait until the server is up, then warm up. A failure is logged, never raised: the first
+        picture then loads the model itself (and retries a failed download)."""
+        try:
+            await asyncio.wait_for(self._stop.wait(), timeout=delay_seconds)
+            return  # shutting down before the delay ended
+        except TimeoutError:
+            pass
+        try:
+            await warm_up()
+        except Exception as exc:
+            logger.warning("Picture warm-up failed (%s); the first picture will load the model.", exc)
 
     async def close(self) -> None:
         self._stop.set()
+        if self._warm_up_task is not None:
+            self._warm_up_task.cancel()  # the load itself runs on in its thread; nothing waits for it
         for task in (self._worker_task, self._sweeper_task):
             if task is not None:
                 await task
@@ -169,12 +197,17 @@ def build_services(settings: Settings) -> Services:
             handlers[JobKind.TTS] = NarrateSceneJob(services.sessions, narration.narrator, services.blobs)
         if illustrate and services.blobs is not None:
             # No illustrator (IMAGE_ENGINE=placeholder, or no usable GPU): every page gets the placeholder.
+            illustrator = build_illustrator(settings, services.blobs)
             handlers[JobKind.IMAGE] = IllustrateSceneJob(
-                services.sessions,
-                services.blobs,
-                image_settings(settings),
-                illustrator=build_illustrator(settings, services.blobs),
+                services.sessions, services.blobs, image_settings(settings), illustrator=illustrator
             )
+            if isinstance(illustrator, LocalIllustrator) and isinstance(illustrator.generator, SD15Local):
+                services.warm_up = functools.partial(
+                    illustrator.generator.warm_up,
+                    settings.image_model,
+                    settings.image_model_revision,
+                    settings.image_sampler,
+                )
         services.worker = Worker(
             services.sessions, handlers, on_final_failure=make_story_failure_hook(services.sessions)
         )

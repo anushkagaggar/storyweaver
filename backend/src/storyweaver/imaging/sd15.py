@@ -145,26 +145,43 @@ class SD15Local:
             raise ValueError(f"Unknown IMAGE_SAMPLER {params.sampler!r}; use one of {sorted(SAMPLERS)}.")
         return await asyncio.to_thread(self._generate, params)
 
-    def _pipeline(self, params: GenerationParams) -> Any:
-        wanted = (params.model, params.model_revision, params.sampler)
+    async def warm_up(self, model: str, revision: str, sampler: str) -> None:
+        """Load the model and draw one tiny throwaway picture, so a story's first page doesn't wait for it.
+
+        The first picture after a restart took 76 s instead of 8-34 s: loading (22 s), then CUDA's first-run
+        set-up. A picture job arriving meanwhile waits on the lock, then finds the model ready.
+        """
+        if sampler not in SAMPLERS:
+            raise ValueError(f"Unknown IMAGE_SAMPLER {sampler!r}; use one of {sorted(SAMPLERS)}.")
+        await asyncio.to_thread(self._warm_up, (model, revision, sampler))
+
+    def _warm_up(self, wanted: tuple[str, str, str]) -> None:
+        with self._lock:
+            started = time.monotonic()
+            pipe = self._pipeline(wanted)
+            pipe(
+                prompt="a small round pebble",
+                width=256,
+                height=256,
+                num_inference_steps=1,
+                guidance_scale=1.0,
+            )
+            logger.info("Pictures warmed up in %.1f s.", time.monotonic() - started)
+
+    def _pipeline(self, wanted: tuple[str, str, str]) -> Any:
         if self._loaded is None or self._loaded[0] != wanted:
             self._loaded = None
             free_gpu_memory()
             started = time.monotonic()
             pipe = self._loader(*wanted)
-            logger.info(
-                "Loaded %s@%s in %.1f s.",
-                params.model,
-                params.model_revision[:12],
-                time.monotonic() - started,
-            )
+            logger.info("Loaded %s@%s in %.1f s.", wanted[0], wanted[1][:12], time.monotonic() - started)
             self._loaded = (wanted, pipe)
         return self._loaded[1]
 
     def _generate(self, params: GenerationParams) -> bytes:
         with self._lock:
             try:
-                pipe = self._pipeline(params)
+                pipe = self._pipeline((params.model, params.model_revision, params.sampler))
                 started = time.monotonic()
                 result = pipe(
                     prompt=params.prompt,

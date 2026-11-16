@@ -1,3 +1,4 @@
+import asyncio
 import dataclasses
 import io
 from types import SimpleNamespace
@@ -11,7 +12,7 @@ from storyweaver.imaging.generator import ImageRejectedError, ImageUnavailableEr
 from storyweaver.imaging.params import GenerationParams
 from storyweaver.imaging.sd15 import SD15Local, download_weights
 from storyweaver.orchestrator.illustration_jobs import LocalIllustrator
-from storyweaver.services import build_illustrator
+from storyweaver.services import Services, build_illustrator
 
 pytestmark = pytest.mark.unit
 
@@ -90,6 +91,50 @@ async def test_the_model_is_loaded_once_and_again_only_when_the_settings_change(
     assert len(loader.loaded) == 1
     await engine.generate(dataclasses.replace(PARAMS, sampler="euler_a"))
     assert len(loader.loaded) == 2
+
+
+async def test_warming_up_loads_the_model_so_the_first_picture_does_not() -> None:
+    pipe = FakePipeline()
+    engine, loader = sd15(pipe)
+
+    await engine.warm_up(PARAMS.model, PARAMS.model_revision, PARAMS.sampler)
+    assert len(loader.loaded) == 1
+    assert pipe.calls[0]["width"] == 256 and pipe.calls[0]["num_inference_steps"] == 1  # a tiny throwaway
+
+    await engine.generate(PARAMS)
+    assert len(loader.loaded) == 1  # reused
+
+
+async def test_the_warm_up_runs_after_the_delay_and_a_failure_is_only_logged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    ran: list[str] = []
+
+    async def failing_warm_up() -> None:
+        ran.append("warm-up")
+        raise ImageUnavailableError("could not download")
+
+    services = Services(warm_up=failing_warm_up)
+    services.start_worker(warm_up_delay_seconds=0.01)
+    await asyncio.sleep(0.05)
+    await services.close()
+
+    assert ran == ["warm-up"]
+    assert "Picture warm-up failed" in caplog.text
+
+
+async def test_shutting_down_during_the_delay_skips_the_warm_up() -> None:
+    ran: list[str] = []
+
+    async def warm_up() -> None:
+        ran.append("warm-up")
+
+    services = Services(warm_up=warm_up)
+    services.start_worker(warm_up_delay_seconds=30)
+    await asyncio.sleep(0)
+    await services.close()
+    await asyncio.sleep(0.01)
+    assert ran == []
 
 
 async def test_a_picture_the_safety_checker_flags_is_rejected_not_returned() -> None:
