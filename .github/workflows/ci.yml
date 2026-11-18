@@ -46,15 +46,17 @@ jobs:
         env:
           TEST_DATABASE_URL: postgresql+asyncpg://storyweaver:ci-only-password@localhost:5432/storyweaver_test  # pragma: allowlist secret
           TEST_REDIS_URL: redis://localhost:6379/15
-      # HF Gradio Spaces install our requirements.txt together with gradio[oauth,mcp], spaces and a torch cap.
-      # Resolve that exact set for the Space's platform so conflicts fail here, not in the Space build.
+      # HF Gradio Spaces install our requirements.txt together with gradio[oauth,mcp], a torch cap and
+      # their own current `spaces` (so the deploy leaves `spaces` out of requirements.txt; a second pin
+      # broke the build when HF moved to spaces 0.52.1). Resolve that set for the Space's platform so
+      # conflicts fail here, not in the Space build.
       - name: Check the Space can install our requirements
         run: |
-          uv export --frozen --no-dev --extra gpu --no-emit-project --no-hashes -o /tmp/space-req.txt
+          uv export --frozen --no-dev --extra gpu --no-emit-project --no-emit-package spaces --no-hashes \
+            -o /tmp/space-req.txt
           GRADIO=$(grep -oP '^gradio==\K[^\s;]+' /tmp/space-req.txt)
-          SPACES=$(grep -oP '^spaces==\K[^\s;]+' /tmp/space-req.txt)
           printf '%s\n' "torch<=2.13.0" "gradio[oauth,mcp]==$GRADIO" "uvicorn>=0.14.0" "websockets>=10.4" \
-            "spaces==$SPACES" >> /tmp/space-req.txt
+            "spaces" >> /tmp/space-req.txt
           uv pip compile --quiet --python-platform x86_64-unknown-linux-gnu --python-version 3.12 \
             /tmp/space-req.txt -o /tmp/space-resolved.txt
 

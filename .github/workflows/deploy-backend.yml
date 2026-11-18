@@ -33,8 +33,11 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.12"
+      # Without `spaces`: HF installs its own current version next to ours, and two pins can't both win.
       - name: Export requirements.txt from uv.lock
-        run: uv export --frozen --no-dev --extra gpu --no-emit-project --no-hashes -o requirements.txt
+        run: >-
+          uv export --frozen --no-dev --extra gpu --no-emit-project --no-emit-package spaces --no-hashes
+          -o requirements.txt
       - name: Push to Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
