@@ -132,6 +132,9 @@ def build_services(settings: Settings, image_engine: SD15Local | None = None) ->
     # Speech-to-text needs no database, so it is available even when story storage isn't.
     services.stt = build_stt(settings, services.groq, router)
     services.narrator = build_narrator(settings, services.groq, router)
+    # Nor does object storage: the `illustrate` endpoint stores pictures with it even on a Space without a
+    # database (a test Space that must never touch real stories).
+    services.blobs = build_blob_store(settings)
 
     if settings.database_url is None:
         logger.warning("DATABASE_URL is not set: story endpoints are disabled.")
@@ -139,7 +142,6 @@ def build_services(settings: Settings, image_engine: SD15Local | None = None) ->
 
     services.engine = create_engine(settings.database_url)
     services.sessions = create_session_factory(services.engine)
-    services.blobs = build_blob_store(settings)
     services.deletion = StoryDeletion(services.sessions, services.blobs)
     if settings.worker_enabled and settings.story_retention_days > 0:
         services.sweeper = RetentionSweeper(

@@ -598,6 +598,9 @@ Every version follows the **release process in §11**. Each version lists **buil
       (`IMAGE_GRADIO_URL=http://localhost:7860`): five pictures, ~5.5 s each, pages 2–5 from page 1's
       reference; smoke 64 passed. `GET /v1/gpu-route-check` makes the Space call its own `gpu_check`
       through the same route: the spike, still to be run on Hugging Face.
+      To run it before the release: a temporary private ZeroGPU test Space without a database, deployed from
+      `dev-v3` by a manual run of the deploy workflow (`space_id` input; production still only takes `v*`
+      tags), checked with `backend/scripts/illustrate_probe.py` (self-call, then two SDXL pages).
 - [ ] Speech → image path ("draw a purple dragon").
 - [ ] MCP: `illustrate`.
 - [ ] **Start the synthetic data generator** (§7), running daily, quota-paced.

@@ -4,6 +4,11 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      space_id:
+        description: "A test Space to deploy this branch to, e.g. <user>/storyweaver-test. Empty = production (tags only)."
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -33,6 +38,13 @@ jobs:
       - name: Push to Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          HF_SPACE_ID: ${{ vars.HF_SPACE_ID }}
+          # A manual run may target a test Space; production only ever gets a v* tag (V3 release policy).
+          HF_SPACE_ID: ${{ inputs.space_id || vars.HF_SPACE_ID }}
+          PRODUCTION_SPACE_ID: ${{ vars.HF_SPACE_ID }}
           COMMIT_MESSAGE: Deploy ${{ github.ref_name }} (${{ github.sha }})
-        run: uv run --no-project --with "huggingface_hub>=1.0" python ../.github/scripts/deploy_space.py
+        run: |
+          if [ "$HF_SPACE_ID" = "$PRODUCTION_SPACE_ID" ] && [ "${GITHUB_REF#refs/tags/v}" = "$GITHUB_REF" ]; then
+            echo "Only a v* tag deploys to the production Space; give a test space_id to deploy $GITHUB_REF." >&2
+            exit 1
+          fi
+          uv run --no-project --with "huggingface_hub>=1.0" python ../.github/scripts/deploy_space.py
