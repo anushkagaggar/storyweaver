@@ -7,6 +7,8 @@ from pydantic import BaseModel, Field
 
 from storyweaver.api.deps import GroqClientDep, SettingsDep, require_api_key
 from storyweaver.api.middleware import get_request_id
+from storyweaver.imaging.generator import ImageUnavailableError
+from storyweaver.services import build_gradio_client
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +37,35 @@ async def echo(body: EchoRequest, request: Request) -> EchoResponse:
     return EchoResponse(message=body.message, request_id=get_request_id(request))
 
 
+class GpuRouteCheckResponse(BaseModel):
+    ok: bool
+    url: str
+    seconds: float
+    detail: object
+
+
 # GPU work is not a REST route: see storyweaver/api/gpu_endpoints.py and ADR-0001.
+
+
+@router.get("/gpu-route-check")
+async def gpu_route_check(settings: SettingsDep) -> GpuRouteCheckResponse:
+    """The worker's picture route, end to end: this server calls its own `gpu_check` Gradio endpoint
+    through IMAGE_GRADIO_URL with HF_TOKEN, exactly as it calls `illustrate` (imaging/remote.py). On the
+    Space that proves ZeroGPU lends a GPU to a call from the Space itself, charged to the token's account.
+    """
+    client = build_gradio_client(settings)
+    if client is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, "IMAGE_GRADIO_URL is not set: pictures are drawn in-process."
+        )
+    start = time.perf_counter()
+    try:
+        detail = await client.call("gpu_check")
+    except ImageUnavailableError as exc:
+        detail = str(exc)
+    ok = isinstance(detail, dict) and detail.get("ok") is True
+    seconds = round(time.perf_counter() - start, 2)
+    return GpuRouteCheckResponse(ok=ok, url=str(settings.image_gradio_url), seconds=seconds, detail=detail)
 
 
 @router.get("/groq-check")

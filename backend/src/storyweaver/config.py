@@ -13,6 +13,12 @@ SD15_DEFAULTS: dict[str, str | int] = {
     "image_width": 768,
     "image_height": 576,
 }
+# Stable Diffusion XL base 1.0 (CreativeML OpenRAIL++-M, not gated), pinned to a commit (checked 18 Nov
+# 2026). The plain image defaults (1152x896) are already SDXL's.
+SDXL_DEFAULTS: dict[str, str | int] = {
+    "image_model": "stabilityai/stable-diffusion-xl-base-1.0",
+    "image_model_revision": "462165984030d82259a11f4367a4eed129e94a7b",  # pragma: allowlist secret
+}
 
 
 class Settings(BaseSettings):
@@ -85,9 +91,10 @@ class Settings(BaseSettings):
     # Lifetime of the presigned audio and image URLs in GET /v1/stories/{id}. The UI re-polls for fresh ones.
     audio_url_ttl_seconds: int = Field(default=3600, ge=60, le=7 * 24 * 3600)
     # Illustrations (plan V3), stored in the same bucket as the audio. "placeholder" draws a soft wordless
-    # picture for every page (no GPU); "sd15" draws real pictures with Stable Diffusion 1.5 on this machine's
-    # NVIDIA GPU (imaging/sd15.py; local Docker only, never on the ZeroGPU Space); "none" turns images off.
-    image_engine: Literal["none", "placeholder", "sd15"] = "placeholder"
+    # picture for every page (no GPU); "sd15" draws real pictures with Stable Diffusion 1.5 (imaging/sd15.py,
+    # local Docker on a 6 GB card); "sdxl" with Stable Diffusion XL (imaging/sdxl.py, the ZeroGPU Space);
+    # "none" turns images off.
+    image_engine: Literal["none", "placeholder", "sd15", "sdxl"] = "placeholder"
     # Generation settings. Every one is part of the image cache key (imaging/params.py). With
     # IMAGE_ENGINE=sd15, the model, its revision and the size default to SD 1.5's (see _engine_defaults).
     image_model: str = "stabilityai/stable-diffusion-xl-base-1.0"
@@ -105,6 +112,17 @@ class Settings(BaseSettings):
     # sd15 keeps the whole model on the GPU (4.5 GB of a 6 GB card, ~6 s a picture). true moves each part
     # there only while it runs: for smaller GPUs, but slower and ~4 GB more RAM (imaging/sd15.py).
     image_cpu_offload: bool = False
+    # Draw through this Space's `illustrate` Gradio endpoint (api/gpu_endpoints.py) instead of in the worker:
+    # required on ZeroGPU, where a GPU exists only inside a Gradio call, so on a ZeroGPU Space it defaults to
+    # the Space's own https://<SPACE_HOST>. Locally, http://localhost:7860 tests the same route with sd15.
+    image_gradio_url: str | None = None
+    image_gradio_timeout_seconds: float = Field(default=180.0, gt=0)
+    # Sent as `Authorization: Bearer` on those calls, so ZeroGPU charges this account's quota (read access
+    # is enough). Without it ZeroGPU falls back to the Space's small anonymous allowance.
+    hf_token: SecretStr | None = None
+    # Set by Hugging Face on a Space: its public host name, and SPACES_ZERO_GPU=true on ZeroGPU hardware.
+    space_host: str | None = None
+    spaces_zero_gpu: bool = False
     # Our own limits (routing/limits.py). Every user's stories use one Groq organisation and every
     # picture one HF account's ZeroGPU quota, so one user must not use up the day for everyone.
     visitor_stories_per_hour: int = Field(default=5, ge=1)
@@ -123,6 +141,9 @@ class Settings(BaseSettings):
     @field_validator(
         "groq_api_key",
         "user_token_secret",
+        "hf_token",
+        "image_gradio_url",
+        "space_host",
         "langfuse_public_key",
         "langfuse_secret_key",
         "s3_endpoint_url",
@@ -169,15 +190,20 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _engine_defaults(self) -> "Settings":
-        """SD 1.5 settings for IMAGE_ENGINE=sd15, unless IMAGE_MODEL / _REVISION / _WIDTH / _HEIGHT are set.
+        """The engine's pinned model and size, unless IMAGE_MODEL / _REVISION / _WIDTH / _HEIGHT are set.
 
         The plain defaults are SDXL's (1152x896), which SD 1.5 draws badly (it was trained at 512) and which
-        don't fit in 6 GB. The revision is pinned so the image cache key names exact weights.
+        don't fit in 6 GB. The revision is pinned so the image cache key names exact weights. On a ZeroGPU
+        Space pictures can only be drawn through Gradio, so the worker calls the Space's own URL.
         """
-        if self.image_engine == "sd15":
-            for name, value in SD15_DEFAULTS.items():
-                if name not in self.model_fields_set:
-                    setattr(self, name, value)
+        defaults = {"sd15": SD15_DEFAULTS, "sdxl": SDXL_DEFAULTS}.get(self.image_engine, {})
+        for name, value in defaults.items():
+            if name not in self.model_fields_set:
+                setattr(self, name, value)
+        if self.image_gradio_url is None and self.spaces_zero_gpu and self.space_host:
+            self.image_gradio_url = f"https://{self.space_host}"
+        if self.image_gradio_url is not None:
+            self.image_gradio_url = self.image_gradio_url.rstrip("/")
         return self
 
     @property

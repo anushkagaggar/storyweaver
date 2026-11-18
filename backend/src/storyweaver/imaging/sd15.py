@@ -179,26 +179,50 @@ def no_reference() -> Image.Image:
 
 
 class SD15Local:
-    """One picture at a time (a lock), in a worker thread so the event loop keeps serving requests."""
+    """One picture at a time (a lock), in a worker thread so the event loop keeps serving requests.
 
-    name = "sd15"
+    It runs whatever diffusers pipeline its loader returns, with an IP-Adapter loaded: SD 1.5 here, SDXL
+    with `imaging.sdxl.load_sdxl_pipeline` (named "sdxl").
+    """
 
     def __init__(
         self,
         loader: PipelineLoader = load_pipeline,
         generator_for: Callable[[int], Any] = seeded_generator,
+        *,
+        name: str = "sd15",
     ) -> None:
         self._loader = loader
         self._generator_for = generator_for
+        self._name = name
         self._lock = threading.Lock()
         self._loaded: tuple[tuple[str, str, str], Any] | None = None
 
+    @property
+    def name(self) -> str:
+        return self._name
+
     async def generate(self, params: GenerationParams, reference: bytes | None = None) -> bytes:
+        self.check(params, reference)
+        return await asyncio.to_thread(self._generate, params, reference)
+
+    def draw(self, params: GenerationParams, reference: bytes | None = None) -> bytes:
+        """`generate` on the calling thread: inside a ZeroGPU `@spaces.GPU` call (imaging/gpu_drawing.py)."""
+        self.check(params, reference)
+        return self._generate(params, reference)
+
+    @staticmethod
+    def check(params: GenerationParams, reference: bytes | None) -> None:
         if params.sampler not in SAMPLERS:
             raise ValueError(f"Unknown IMAGE_SAMPLER {params.sampler!r}; use one of {sorted(SAMPLERS)}.")
         if (reference is None) != (params.reference_sha256 is None):
             raise ValueError("A reference picture and its sha256 must be given together.")
-        return await asyncio.to_thread(self._generate, params, reference)
+
+    def load(self, model: str, revision: str, sampler: str) -> None:
+        """Load the model now. On ZeroGPU this must happen at start-up, before `launch()`: the weights are
+        moved to "cuda" there and ZeroGPU attaches them to the GPU it lends each call."""
+        with self._lock:
+            self._pipeline((model, revision, sampler))
 
     async def warm_up(self, model: str, revision: str, sampler: str) -> None:
         """Load the model and draw one tiny throwaway picture, so a story's first page doesn't wait for it.

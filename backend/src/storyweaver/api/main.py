@@ -13,7 +13,8 @@ from storyweaver.api.gpu_endpoints import register_gpu_endpoints
 from storyweaver.api.middleware import REQUEST_ID_HEADER, request_id_middleware
 from storyweaver.api.routers import diagnostics, health, speech, stories
 from storyweaver.config import get_settings
-from storyweaver.services import build_services
+from storyweaver.imaging.gpu_drawing import Drawing, set_engine
+from storyweaver.services import build_image_engine, build_services
 
 
 class StoryWeaverServer(gr.Server):
@@ -37,7 +38,7 @@ async def lifespan(app: Any) -> AsyncIterator[None]:
     Under gr.Server.launch(), Gradio replaces the constructor's lifespan, so app.py must also pass this
     function via launch(app_kwargs={"lifespan": lifespan}); the constructor argument covers TestClient.
     """
-    services = build_services(get_settings())
+    services = build_services(get_settings(), image_engine=getattr(app.state, "image_engine", None))
     app.state.services = services
     services.start_worker()
     try:
@@ -80,5 +81,8 @@ def create_app() -> gr.Server:
     app.include_router(diagnostics.router)
     app.include_router(stories.router)
     app.include_router(speech.router)
-    register_gpu_endpoints(app)
+    # The picture model the `illustrate` endpoint draws with. On ZeroGPU it loads here, before launch().
+    app.state.image_engine = build_image_engine(settings)
+    set_engine(app.state.image_engine)
+    register_gpu_endpoints(app, Drawing(lambda: getattr(getattr(app.state, "services", None), "blobs", None)))
     return app

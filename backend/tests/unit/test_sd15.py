@@ -12,7 +12,7 @@ from storyweaver.imaging.generator import ImageRejectedError, ImageUnavailableEr
 from storyweaver.imaging.params import GenerationParams
 from storyweaver.imaging.sd15 import SD15Local, download_weights
 from storyweaver.orchestrator.illustration_jobs import LocalIllustrator
-from storyweaver.services import Services, build_illustrator
+from storyweaver.services import Services, build_illustrator, build_image_engine
 
 pytestmark = pytest.mark.unit
 
@@ -248,9 +248,13 @@ def test_sizes_must_be_multiples_of_eight() -> None:
 def test_the_illustrator_is_sd15_only_locally_with_a_gpu(monkeypatch: pytest.MonkeyPatch) -> None:
     blobs: Any = object()
     monkeypatch.setattr("storyweaver.services.nvidia_gpu_present", lambda: True)
-    assert isinstance(build_illustrator(_settings(image_engine="sd15"), blobs), LocalIllustrator)
-    assert build_illustrator(_settings(image_engine="placeholder"), blobs) is None
-    assert build_illustrator(_settings(image_engine="sd15", app_env="prod"), blobs) is None
+    engine = build_image_engine(_settings(image_engine="sd15"))
+    assert engine is not None and engine.name == "sd15"
+    assert isinstance(build_illustrator(_settings(image_engine="sd15"), blobs, engine), LocalIllustrator)
+    assert build_illustrator(_settings(image_engine="placeholder"), blobs, engine) is None
+    assert build_image_engine(_settings(image_engine="placeholder")) is None
+    assert build_image_engine(_settings(image_engine="sd15", app_env="prod")) is None
 
     monkeypatch.setattr("storyweaver.services.nvidia_gpu_present", lambda: False)
-    assert build_illustrator(_settings(image_engine="sd15"), blobs) is None  # placeholders, not CPU minutes
+    assert build_image_engine(_settings(image_engine="sd15")) is None  # placeholders, not CPU minutes
+    assert build_illustrator(_settings(image_engine="sd15"), blobs, None) is None

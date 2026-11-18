@@ -4,16 +4,20 @@ ZeroGPU only works through Gradio: its startup hook runs inside Blocks.launch(),
 per caller using headers from the Gradio request. REST routes therefore never call @spaces.GPU functions;
 callers use the Gradio API (POST /gradio_api/call/<name>, then GET the event stream) with X-API-Key, plus an
 HF token in Authorization so ZeroGPU charges the token owner's quota.
+
+`illustrate` is called by the job worker itself, through the Space's public URL (imaging/remote.py).
 """
 
 from typing import Any
 
 import gradio as gr
 
-# Importing registers the @spaces.GPU functions; ZeroGPU requires them to exist at startup.
 from storyweaver.api.deps import INVALID_API_KEY_MESSAGE, api_key_is_valid
 from storyweaver.config import get_settings
+
+# Importing registers the @spaces.GPU functions; ZeroGPU requires them to exist at startup.
 from storyweaver.diagnostics import run_gpu_matmul
+from storyweaver.imaging.gpu_drawing import Drawing
 
 
 def _require_api_key(request: gr.Request) -> None:
@@ -27,6 +31,16 @@ def gpu_check(request: gr.Request) -> dict[str, Any]:
     return result
 
 
-def register_gpu_endpoints(server: gr.Server) -> None:
+def illustrate_endpoint(drawing: Drawing) -> Any:
+    async def illustrate(job: str, request: gr.Request) -> dict[str, Any]:
+        """Draw one picture and store it; `job` is an IllustrateRequest as JSON (imaging/remote.py)."""
+        _require_api_key(request)
+        return await drawing.illustrate(job)
+
+    return illustrate
+
+
+def register_gpu_endpoints(server: gr.Server, drawing: Drawing) -> None:
     # One GPU job at a time: ZeroGPU quota is scarce and the local 6 GB GPU fits one model.
     server.api(fn=gpu_check, name="gpu_check", concurrency_limit=1)
+    server.api(fn=illustrate_endpoint(drawing), name="illustrate", concurrency_limit=1)

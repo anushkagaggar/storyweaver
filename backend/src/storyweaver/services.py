@@ -17,7 +17,9 @@ from storyweaver.adapters.groq_orpheus import GroqOrpheus
 from storyweaver.adapters.groq_whisper import GroqWhisper
 from storyweaver.adapters.kokoro_tts import Kokoro
 from storyweaver.config import Settings
+from storyweaver.imaging.remote import GradioIllustrator
 from storyweaver.imaging.sd15 import IP_ADAPTER_MODEL, SD15Local, load_pipeline, nvidia_gpu_present
+from storyweaver.imaging.sdxl import SDXL_IP_ADAPTER_MODEL, load_sdxl_pipeline
 from storyweaver.jobs.worker import Handler, Worker
 from storyweaver.llm.planner import StoryPlanner
 from storyweaver.observability.tracing import NoopTracer, Tracer
@@ -31,7 +33,7 @@ from storyweaver.orchestrator.narration import Narrator
 from storyweaver.orchestrator.narration_jobs import NarrateSceneJob, StoryNarration
 from storyweaver.orchestrator.story_deletion import RetentionSweeper, StoryDeletion
 from storyweaver.orchestrator.story_service import PlanStoryJob, StoryService, make_story_failure_hook
-from storyweaver.routing.limits import VisitorLimiter
+from storyweaver.routing.limits import GpuBudget, VisitorLimiter
 from storyweaver.routing.llm import RoutedLLM
 from storyweaver.routing.router import ModelRouter
 from storyweaver.routing.store import InMemoryQuotaStore, QuotaStore, RedisQuotaStore
@@ -63,7 +65,7 @@ class Services:
     sweeper: RetentionSweeper | None = None
     worker: Worker | None = None
     tracer: Tracer = field(default_factory=NoopTracer)
-    # Loads the picture model in the background after start-up (IMAGE_ENGINE=sd15).
+    # Loads the picture model in the background after start-up (sd15 or sdxl on a local GPU).
     warm_up: Callable[[], Awaitable[None]] | None = None
     _worker_task: asyncio.Task[None] | None = field(default=None, repr=False)
     _sweeper_task: asyncio.Task[None] | None = field(default=None, repr=False)
@@ -111,7 +113,8 @@ class Services:
             await self.engine.dispose()
 
 
-def build_services(settings: Settings) -> Services:
+def build_services(settings: Settings, image_engine: SD15Local | None = None) -> Services:
+    """`image_engine` is the picture model this process draws with (build_image_engine), if any."""
     services = Services()
     store: QuotaStore
     if settings.redis_url:
@@ -197,13 +200,25 @@ def build_services(settings: Settings) -> Services:
             handlers[JobKind.TTS] = NarrateSceneJob(services.sessions, narration.narrator, services.blobs)
         if illustrate and services.blobs is not None:
             # No illustrator (IMAGE_ENGINE=placeholder, or no usable GPU): every page gets the placeholder.
-            illustrator = build_illustrator(settings, services.blobs)
-            handlers[JobKind.IMAGE] = IllustrateSceneJob(
-                services.sessions, services.blobs, image_settings(settings), illustrator=illustrator
+            illustrator = build_illustrator(settings, services.blobs, image_engine)
+            # Through Gradio, every picture uses the HF account's ZeroGPU quota: our own daily budget
+            # keeps one busy day from using all of it (routing/limits.py).
+            budget = (
+                GpuBudget(store, seconds_per_day=settings.gpu_seconds_per_day)
+                if isinstance(illustrator, GradioIllustrator)
+                else None
             )
-            if isinstance(illustrator, LocalIllustrator) and isinstance(illustrator.generator, SD15Local):
+            handlers[JobKind.IMAGE] = IllustrateSceneJob(
+                services.sessions,
+                services.blobs,
+                image_settings(settings),
+                illustrator=illustrator,
+                gpu_budget=budget,
+                gpu_seconds_per_image=settings.gpu_seconds_per_image,
+            )
+            if illustrator is not None and image_engine is not None and not settings.spaces_zero_gpu:
                 services.warm_up = functools.partial(
-                    illustrator.generator.warm_up,
+                    image_engine.warm_up,
                     settings.image_model,
                     settings.image_model_revision,
                     settings.image_sampler,
@@ -214,29 +229,76 @@ def build_services(settings: Settings) -> Services:
     return services
 
 
-def build_illustrator(settings: Settings, blobs: BlobStore) -> Illustrator | None:
-    """The picture maker for IMAGE_ENGINE, or None for placeholders.
+def build_image_engine(settings: Settings) -> SD15Local | None:
+    """The picture model this process draws with (sd15 or sdxl), or None.
 
-    sd15 needs a CUDA GPU in this process. On the ZeroGPU Space there is none outside a `@spaces.GPU` call
-    (and its CUDA checks are patched), so APP_ENV=prod never uses it: GPU pictures there are step 4's job.
-    Without a GPU it logs why and falls back to placeholders rather than drawing for minutes on the CPU.
+    On a ZeroGPU Space CUDA exists only inside a `@spaces.GPU` call, so the model is loaded now, at start-up
+    (before launch()), and only the `illustrate` endpoint draws with it. Elsewhere it needs an NVIDIA GPU
+    here and loads lazily (warmed up after start-up); without one, pictures fall back to placeholders
+    rather than drawing for minutes on the CPU.
     """
-    if settings.image_engine != "sd15":
+    engine_name = settings.image_engine
+    if engine_name not in ("sd15", "sdxl"):
         return None
-    if settings.app_env == "prod":
-        logger.warning("IMAGE_ENGINE=sd15 is for local Docker only; using placeholder pictures.")
+    if settings.app_env == "prod" and not settings.spaces_zero_gpu:
+        logger.warning("IMAGE_ENGINE=%s needs a ZeroGPU Space in production; no pictures.", engine_name)
         return None
-    if not nvidia_gpu_present():
-        logger.warning("IMAGE_ENGINE=sd15 but no NVIDIA GPU here; using placeholder pictures.")
+    if not settings.spaces_zero_gpu and not nvidia_gpu_present():
+        logger.warning("IMAGE_ENGINE=%s but no NVIDIA GPU here; no pictures drawn here.", engine_name)
         return None
-    logger.info("Pictures: Stable Diffusion 1.5 on the local GPU (%s).", settings.image_model)
-    loader = functools.partial(load_pipeline, offload=settings.image_cpu_offload)
-    return LocalIllustrator(SD15Local(loader=loader), blobs)
+    if engine_name == "sdxl":
+        engine = SD15Local(loader=load_sdxl_pipeline, name="sdxl")
+    else:
+        engine = SD15Local(loader=functools.partial(load_pipeline, offload=settings.image_cpu_offload))
+    logger.info("Pictures: %s (%s).", engine.name, settings.image_model)
+    if settings.spaces_zero_gpu:
+        try:
+            engine.load(settings.image_model, settings.image_model_revision, settings.image_sampler)
+        except Exception:
+            # Loading inside each GPU call would take minutes per picture; placeholders instead.
+            logger.exception("Loading the picture model failed; pictures will be placeholders.")
+            return None
+    return engine
+
+
+def build_illustrator(
+    settings: Settings, blobs: BlobStore, image_engine: SD15Local | None = None
+) -> Illustrator | None:
+    """How the worker gets pictures for IMAGE_ENGINE, or None for placeholders.
+
+    With IMAGE_GRADIO_URL (always on a ZeroGPU Space): through the `illustrate` Gradio endpoint, so the
+    GPU call has a Gradio request and an HF token to charge. Otherwise in this process, on `image_engine`.
+    """
+    if settings.image_engine not in ("sd15", "sdxl"):
+        return None
+    gradio = build_gradio_client(settings)
+    if gradio is not None:
+        if settings.spaces_zero_gpu and settings.hf_token is None:
+            logger.warning("HF_TOKEN is not set: pictures use the Space's small anonymous ZeroGPU quota.")
+        logger.info("Pictures are drawn through %s/gradio_api (illustrate).", settings.image_gradio_url)
+        return gradio
+    if image_engine is None:
+        return None
+    return LocalIllustrator(image_engine, blobs)
+
+
+def build_gradio_client(settings: Settings) -> GradioIllustrator | None:
+    """The client for this Space's Gradio GPU endpoints at IMAGE_GRADIO_URL, if set."""
+    if settings.image_gradio_url is None:
+        return None
+    return GradioIllustrator(
+        settings.image_gradio_url,
+        settings.storyweaver_api_key.get_secret_value(),
+        engine=settings.image_engine,
+        hf_token=settings.hf_token.get_secret_value() if settings.hf_token else None,
+        timeout_seconds=settings.image_gradio_timeout_seconds,
+    )
 
 
 def image_settings(settings: Settings) -> ImageSettings:
-    # Only SD15Local has an IP-Adapter so far; with a strength of 0, later pages needn't wait for page 1.
-    consistent = settings.image_engine == "sd15" and settings.image_reference_scale > 0
+    # sd15 and sdxl have an IP-Adapter; with a strength of 0, later pages needn't wait for page 1.
+    consistent = settings.image_engine in ("sd15", "sdxl") and settings.image_reference_scale > 0
+    adapter = SDXL_IP_ADAPTER_MODEL if settings.image_engine == "sdxl" else IP_ADAPTER_MODEL
     return ImageSettings(
         model=settings.image_model,
         model_revision=settings.image_model_revision,
@@ -246,7 +308,7 @@ def image_settings(settings: Settings) -> ImageSettings:
         steps=settings.image_steps,
         guidance=settings.image_guidance,
         reference_scale=settings.image_reference_scale if consistent else None,
-        reference_model=IP_ADAPTER_MODEL if consistent else None,
+        reference_model=adapter if consistent else None,
     )
 
 

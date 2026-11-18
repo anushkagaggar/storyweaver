@@ -68,7 +68,7 @@ echo "--- Gradio GPU endpoint (ADR-0001)"
 gradio_call() {
   local name=$1; shift
   local id
-  id=$(curl -s -m 30 -X POST "$API/gradio_api/call/$name" -H 'Content-Type: application/json' "$@" -d '{"data":[]}' \
+  id=$(curl -s -m 30 -X POST "$API/gradio_api/call/$name" -H 'Content-Type: application/json' "$@" -d "${GRADIO_DATA:-{\"data\":[]\}}" \
     | python -I -c "import json,sys;print(json.load(sys.stdin).get('event_id',''))" 2>/dev/null)
   [ -n "$id" ] || { echo "no-event-id|"; return; }
   curl -s -m 120 "$API/gradio_api/call/$name/$id" "$@" | tr -d '\r' \
@@ -81,6 +81,14 @@ res=$(gradio_call gpu_check)
 check "gpu_check without key -> error"  error "${res%%|*}"
 res=$(gradio_call gpu_check -H 'X-API-Key: wrong')
 check "gpu_check wrong key -> error"    error "${res%%|*}"
+# The worker's picture route (V3): the Gradio endpoint `illustrate`, and this server calling its own
+# gpu_check over HTTP when IMAGE_GRADIO_URL is set (404 means pictures are drawn in-process instead).
+res=$(GRADIO_DATA='{"data":["{}"]}' gradio_call illustrate)
+check "illustrate without key -> error"  error "${res%%|*}"
+res=$(GRADIO_DATA='{"data":["{}"]}' gradio_call illustrate -H "X-API-Key: $KEY")
+check "illustrate bad job -> invalid"    invalid "$(echo "${res#*|}" | python -I -c 'import json,sys;print(json.load(sys.stdin)[0].get("outcome"))' 2>/dev/null)"
+route=$(curl -s -m 150 -w '|%{http_code}' -H "X-API-Key: $KEY" $API/v1/gpu-route-check)
+check "gpu route check (404 = in-process)" ok "$(python -I -c 'import json,sys;b,c=sys.argv[1].rsplit("|",1);print("ok" if c=="404" or json.loads(b).get("ok") else b)' "$route" 2>/dev/null)"
 
 echo "--- Sign-in and owners (V3)"
 # The smoke test can't sign in with Google, so it signs its own session cookies with AUTH_SECRET, exactly as the

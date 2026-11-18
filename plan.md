@@ -554,7 +554,11 @@ Every version follows the **release process in §11**. Each version lists **buil
       on the CPU), 22 s to load; ~6 s once the whole model stays on the GPU (see character consistency).
       The model loads and warms up in the background 15 s after start-up. Every prompt starts with a fixed picture-book style (`imaging/params.py`): without it the
       planner's prompts came out as photographs. Weights fetch with retries (`python -m storyweaver.imaging.sd15`).
-- [ ] `SDXLZeroGPU` (`@spaces.GPU(duration=…)`).
+- [ ] `SDXLZeroGPU` (`@spaces.GPU(duration=…)`). Code done 18 Nov 2026, not yet run on ZeroGPU:
+      `IMAGE_ENGINE=sdxl` (`imaging/sdxl.py`), SDXL base 1.0 pinned, 1152x896, fp16, IP-Adapter Plus SDXL
+      (ViT-H) at the same 0.4, and SD 1.5's safety checker on every picture (SDXL has none). On ZeroGPU it
+      loads at start-up, before `launch()`, and draws in `draw_on_gpu` (`imaging/gpu_drawing.py`,
+      `duration=30`). Too big for the local 6 GB card plus Docker's 7.35 GB RAM, so it needs a test on a Space.
 - [x] Character consistency (§6.5): visual string, seed, IP-Adapter reference from scene 1. Done 16 Nov
       2026 for `SD15Local`: the main character's `visual` is put early in every prompt when the planner left
       it out; later pages wait (deferred) for page 1 and, when they share its main character, use its picture
@@ -589,6 +593,11 @@ Every version follows the **release process in §11**. Each version lists **buil
 - [ ] **ZeroGPU from the worker (option b).** The worker calls the Space's own Gradio endpoint `illustrate`
       over HTTP with an HF token (a new Space Secret), and the endpoint uploads the image before returning.
       Spike first: confirm ZeroGPU accepts a call from inside the Space through its `*.hf.space` URL.
+      Built 18 Nov 2026 (`imaging/remote.py` client, `illustrate` endpoint, `GpuBudget` wired in), defaulting
+      to `https://$SPACE_HOST` on ZeroGPU. Tested locally through the real route with sd15
+      (`IMAGE_GRADIO_URL=http://localhost:7860`): five pictures, ~5.5 s each, pages 2–5 from page 1's
+      reference; smoke 64 passed. `GET /v1/gpu-route-check` makes the Space call its own `gpu_check`
+      through the same route: the spike, still to be run on Hugging Face.
 - [ ] Speech → image path ("draw a purple dragon").
 - [ ] MCP: `illustrate`.
 - [ ] **Start the synthetic data generator** (§7), running daily, quota-paced.

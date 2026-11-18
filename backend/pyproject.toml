@@ -99,6 +99,6 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = [
     "spaces", "spaces.*", "torch", "torch.*", "faster_whisper", "faster_whisper.*", "kokoro_onnx", "kokoro_onnx.*",
-    "diffusers", "diffusers.*",
+    "diffusers", "diffusers.*", "transformers", "transformers.*",
 ]
 ignore_missing_imports = true
