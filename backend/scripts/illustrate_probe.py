@@ -74,8 +74,11 @@ async def probe(space: str, out: Path, env: dict[str, str | None], local: bool) 
     print(f"HF token: {'yes' if hf_token else 'no (anonymous ZeroGPU quota)'}")
 
     started = time.monotonic()
+    headers = {"X-API-Key": api_key}
+    if hf_token:  # a private Space's proxy answers 404 to anyone without a token that can read it
+        headers["Authorization"] = f"Bearer {hf_token}"
     async with httpx.AsyncClient(timeout=200) as client:
-        check = await client.get(f"{space}/v1/gpu-route-check", headers={"X-API-Key": api_key})
+        check = await client.get(f"{space}/v1/gpu-route-check", headers=headers)
     print(f"1. self-call: HTTP {check.status_code} in {time.monotonic() - started:.1f} s: {check.text[:400]}")
 
     prefix = "S3_" if local else "BACKBLAZE_"
