@@ -33,6 +33,8 @@ export function StoryBook({ story }: { story: Story }) {
   const note = audioNote(scene);
   const picture = imageNote(scene);
   const next = story.scenes.at(page + 1);
+  // A picture ("draw a purple dragon") is one page: no page numbers or page buttons.
+  const single = story.kind === "picture" || last === 0;
 
   return (
     <article className="storybook" aria-roledescription="storybook">
@@ -42,9 +44,11 @@ export function StoryBook({ story }: { story: Story }) {
       </header>
 
       <section className="page" aria-live="polite" aria-label={`Page ${page + 1} of ${last + 1}`}>
-        <p className="page-number">
-          Page {page + 1} of {last + 1}
-        </p>
+        {!single && (
+          <p className="page-number">
+            Page {page + 1} of {last + 1}
+          </p>
+        )}
         {scene.image_url ? (
           // Presigned, short-lived URLs from our own bucket: next/image's optimiser would add nothing here.
           // eslint-disable-next-line @next/next/no-img-element
@@ -53,7 +57,7 @@ export function StoryBook({ story }: { story: Story }) {
             className={scene.image_status === "placeholder" ? "page-image placeholder" : "page-image"}
             src={scene.image_url}
             // The picture shows what the text says; a placeholder is decorative.
-            alt={scene.image_status === "placeholder" ? "" : `Picture for page ${page + 1}`}
+            alt={scene.image_status === "placeholder" ? "" : single ? scene.text : `Picture for page ${page + 1}`}
           />
         ) : (
           scene.image_status === "pending" && <div className="page-image drawing" aria-hidden="true" />
@@ -89,14 +93,16 @@ export function StoryBook({ story }: { story: Story }) {
         )}
       </section>
 
-      <nav className="page-nav" aria-label="Pages">
-        <button type="button" onClick={() => go(-1)} disabled={page === 0}>
-          ← Back
-        </button>
-        <button type="button" onClick={() => go(1)} disabled={page === last}>
-          Next →
-        </button>
-      </nav>
+      {!single && (
+        <nav className="page-nav" aria-label="Pages">
+          <button type="button" onClick={() => go(-1)} disabled={page === 0}>
+            ← Back
+          </button>
+          <button type="button" onClick={() => go(1)} disabled={page === last}>
+            Next →
+          </button>
+        </nav>
+      )}
 
       {page === last && story.moral && (
         <p className="moral">

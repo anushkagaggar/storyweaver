@@ -175,8 +175,18 @@ def build_services(settings: Settings, image_engine: SD15Local | None = None) ->
         per_day=settings.visitor_stories_per_day,
         secret=settings.storyweaver_api_key.get_secret_value(),
     )
+    picture_limiter = VisitorLimiter(
+        store,
+        per_hour=settings.visitor_pictures_per_hour,
+        per_day=settings.visitor_pictures_per_day,
+        secret=settings.storyweaver_api_key.get_secret_value(),
+        namespace="pictures",
+    )
     services.stories = StoryService(
-        services.sessions, input_guard=InputGuard(llm, policy, guard_models), visitor_limiter=visitor_limiter
+        services.sessions,
+        input_guard=InputGuard(llm, policy, guard_models),
+        visitor_limiter=visitor_limiter,
+        picture_limiter=picture_limiter,
     )
     planner = StoryPlanner(
         llm,
@@ -230,6 +240,8 @@ def build_services(settings: Settings, image_engine: SD15Local | None = None) ->
             services.sessions, handlers, on_final_failure=make_story_failure_hook(services.sessions)
         )
         services.stories.on_enqueued = services.worker.wake
+        # Pictures ("draw a purple dragon") are image jobs, so they need the worker's image handler.
+        services.stories.pictures_enabled = JobKind.IMAGE in handlers
     return services
 
 

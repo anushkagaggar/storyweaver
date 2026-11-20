@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from storyweaver.domain.story import AgeBand, SceneCount, Story
+from storyweaver.domain.story import AgeBand, SceneCount, Story, character_seed
 from storyweaver.jobs.queue import JobQueue
 from storyweaver.jobs.worker import (
     DeferJobError,
@@ -31,16 +31,26 @@ from storyweaver.llm.planner import PlanningError, StoryPlanner, StoryRequest
 from storyweaver.observability.tracing import trace_scope
 from storyweaver.orchestrator.illustration_jobs import mark_scene_image_failed
 from storyweaver.orchestrator.narration_jobs import StoryNarration, mark_scene_audio_failed
+from storyweaver.orchestrator.picture_request import picture_caption, picture_subject, picture_title
 from storyweaver.routing.limits import VisitorLimiter
 from storyweaver.routing.router import QuotaExhaustedError
 from storyweaver.safety.guards import (
+    BRANDS,
     OUTPUT_REJECTED_MESSAGE,
     InputGuard,
     OutputGuard,
     SafetyCheckError,
     SafetyVerdict,
 )
-from storyweaver.storage.models import JobKind, StoryRow, StoryStatus
+from storyweaver.storage.models import (
+    CharacterRow,
+    ImageStatus,
+    JobKind,
+    SceneRow,
+    StoryKind,
+    StoryRow,
+    StoryStatus,
+)
 from storyweaver.storage.repositories import StoryRepository, row_to_story
 
 logger = logging.getLogger(__name__)
@@ -66,12 +76,33 @@ class SafetyUnavailableError(Exception):
         return self.reason
 
 
+class PicturesUnavailableError(Exception):
+    """This server draws no pictures (no image engine, storage or worker)."""
+
+
+class UnclearPictureError(Exception):
+    """Nothing to draw was left once the request words were taken out ("draw", "please")."""
+
+
+# The picture's one character: its look is the request, so the self-check looks for what was asked for.
+PICTURE_CHARACTER = "main"
+PICTURE_BRANDS = "picture_brands"
+
+
 @dataclass(frozen=True)
 class AcceptedStory:
     story_id: uuid.UUID
     job_id: uuid.UUID
     status: str
     replayed: bool
+
+
+def picture_request_hash(subject: str, owner_id: str) -> str:
+    """Never equal to a story's request_hash: an Idempotency-Key reused across the two is a conflict."""
+    canonical = json.dumps(
+        {"kind": StoryKind.PICTURE.value, "subject": subject, "owner": owner_id}, sort_keys=True
+    )
+    return hashlib.sha256(canonical.encode()).hexdigest()
 
 
 def request_hash(prompt: str, age_band: AgeBand, num_scenes: SceneCount, owner_id: str) -> str:
@@ -88,10 +119,16 @@ class StoryService:
         sessions: async_sessionmaker[AsyncSession],
         input_guard: InputGuard | None,
         visitor_limiter: VisitorLimiter | None = None,
+        *,
+        picture_limiter: VisitorLimiter | None = None,
+        pictures_enabled: bool = False,
     ) -> None:
         self._sessions = sessions
         self._input_guard = input_guard
         self._visitor_limiter = visitor_limiter
+        self._picture_limiter = picture_limiter
+        # Pictures need the worker and an image engine with somewhere to store them (services.py).
+        self.pictures_enabled = pictures_enabled
         # Called after a job is committed, to wake the in-process worker (Worker.wake); it does not poll.
         self.on_enqueued: Callable[[], None] | None = None
 
@@ -131,6 +168,83 @@ class StoryService:
                 accepted = AcceptedStory(story.id, job.id, story.status, replayed=False)
         except IntegrityError:
             # A concurrent request with the same Idempotency-Key won the race.
+            if idempotency_key is None:
+                raise
+            replay = await self._replay(idempotency_key, digest)
+            if replay is None:
+                raise
+            return replay
+        if self.on_enqueued is not None:
+            self.on_enqueued()
+        return accepted
+
+    async def create_picture(
+        self, *, prompt: str, idempotency_key: str | None, owner_id: str
+    ) -> AcceptedStory:
+        """One picture from words like "draw a purple dragon" (plan V3, speech -> picture).
+
+        A one-page story of kind "picture": the same input checks as a story, then a READY row with one
+        scene and one `image` job, so ownership, sharing, deletion, expiry and the picture pipeline (GPU
+        budget, self-check, placeholder) all apply. No planner and no narration. Raises
+        PicturesUnavailableError, UnclearPictureError, UnsafeInputError, LimitExceededError,
+        SafetyUnavailableError or IdempotencyConflictError.
+        """
+        if not self.pictures_enabled:
+            raise PicturesUnavailableError
+        subject = picture_subject(prompt)
+        if subject is None:
+            raise UnclearPictureError
+        digest = picture_request_hash(subject, owner_id)
+        if idempotency_key is not None:
+            existing = await self._replay(idempotency_key, digest)
+            if existing is not None:
+                return existing
+        if self._picture_limiter is not None:
+            await self._picture_limiter.acquire(owner_id)
+        verdict = await self._check_input(subject)
+        if verdict.adaptation == BRANDS:
+            # A story's planner swaps in original characters; a picture would have to draw the brand's.
+            raise UnsafeInputError(SafetyVerdict(False, stage="policy", category=PICTURE_BRANDS))
+        try:
+            async with self._sessions() as session, session.begin():
+                story = await StoryRepository(session).create(
+                    prompt_text=prompt,
+                    age_band="4-6",
+                    num_scenes=1,
+                    idempotency_key=idempotency_key,
+                    request_hash=digest,
+                    owner_id=owner_id,
+                    kind=StoryKind.PICTURE,
+                )
+                story.title = picture_title(subject)
+                story.status = StoryStatus.READY
+                session.add_all(
+                    [
+                        CharacterRow(
+                            story_id=story.id,
+                            char_key=PICTURE_CHARACTER,
+                            position=0,
+                            name="",
+                            species="",
+                            visual_desc=subject,
+                            seed=character_seed(str(story.id), PICTURE_CHARACTER),
+                        ),
+                        SceneRow(
+                            story_id=story.id,
+                            idx=1,
+                            text=picture_caption(subject),
+                            image_prompt=subject,
+                            character_keys=[PICTURE_CHARACTER],
+                            lines=[],
+                            image_status=ImageStatus.PENDING,
+                        ),
+                    ]
+                )
+                job = await JobQueue(session).enqueue(
+                    JobKind.IMAGE, {"story_id": str(story.id), "idx": 1}, story_id=story.id
+                )
+                accepted = AcceptedStory(story.id, job.id, story.status, replayed=False)
+        except IntegrityError:
             if idempotency_key is None:
                 raise
             replay = await self._replay(idempotency_key, digest)

@@ -44,6 +44,21 @@ export async function createStory(
   }
 }
 
+/** One picture from words like "draw a purple dragon"; read it like a story (fetchStory). */
+export async function createPicture(prompt: string, idempotencyKey: string): Promise<Result<CreateStoryResponse>> {
+  try {
+    const response = await fetch("/api/pictures", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
+      body: JSON.stringify({ prompt }),
+    });
+    if (!response.ok) return failure(response);
+    return { ok: true, value: (await response.json()) as CreateStoryResponse };
+  } catch {
+    return { ok: false, message: "We couldn't reach the storyteller. Check your connection and try again.", status: 0, retryAfter: null };
+  }
+}
+
 async function getJson<T>(path: string, reconnecting = "Reconnecting…"): Promise<Result<T>> {
   try {
     const response = await fetch(path, { cache: "no-store" });

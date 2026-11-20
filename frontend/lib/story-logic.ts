@@ -1,12 +1,15 @@
 // Pure helpers for the story UI (no React, no fetch) so they can be unit-tested.
 
 import {
+  MAX_PICTURE_PROMPT_LENGTH,
   MAX_PROMPT_LENGTH,
   MIN_PROMPT_LENGTH,
   type Problem,
   type Scene,
   type Story,
+  type StoryKind,
   type StoryStatus,
+  type StorySummary,
 } from "@/lib/story-types";
 
 /** Plan §6.4: poll every 1.5 s, backing off gently, never slower than every 8 s. */
@@ -48,11 +51,48 @@ export function validatePrompt(raw: string): string | null {
   return null;
 }
 
+/** The words around the form for each thing it can make. */
+export const FORM_COPY: Record<StoryKind, { label: string; placeholder: string; submit: string; submitting: string }> = {
+  story: {
+    label: "What should tonight's story be about?",
+    placeholder: "A little dragon who is scared of the dark",
+    submit: "Make my story",
+    submitting: "Starting your story…",
+  },
+  picture: {
+    label: "What should we draw?",
+    placeholder: "A purple dragon",
+    submit: "Draw it",
+    submitting: "Getting the paints ready…",
+  },
+};
+
+/** Client-side check for a picture request, mirroring POST /v1/pictures. */
+export function validatePicturePrompt(raw: string): string | null {
+  const prompt = raw.trim().replace(/\s+/g, " ");
+  if (prompt.length < MIN_PROMPT_LENGTH) return 'Tell us what to draw, for example "a purple dragon".';
+  if (prompt.length > MAX_PICTURE_PROMPT_LENGTH) {
+    return `Please keep it under ${MAX_PICTURE_PROMPT_LENGTH} characters.`;
+  }
+  return null;
+}
+
+/** The link text for one row of "My stories". */
+export function summaryLabel(summary: StorySummary): string {
+  if (summary.title) return summary.title;
+  const thing = summary.kind === "picture" ? "picture" : "story";
+  if (summary.status === "failed") return `A ${thing} that couldn't be finished`;
+  return summary.kind === "picture" ? "A picture being drawn…" : "A story being made…";
+}
+
 /** Turn an API problem response into a sentence a parent can act on. */
 export function problemMessage(problem: Problem, retryAfterSeconds: number | null): string {
   const wait = retryAfterSeconds && retryAfterSeconds > 0 ? ` Please try again in ${retryAfterSeconds} seconds.` : "";
   if (problem.code === "unsafe_input") {
     return problem.detail ?? "This story idea can't be used. Try a gentle, kind idea.";
+  }
+  if (problem.code === "nothing_to_draw" || problem.code === "pictures_unavailable") {
+    return problem.detail ?? "Pictures aren't available right now. Please try again later.";
   }
   if (problem.code === "visitor_limit") {
     return problem.detail ?? "You've made lots of stories! Please come back a little later for more.";
@@ -91,7 +131,7 @@ export function autoRetryDelaySeconds(
   code?: string,
 ): number | null {
   if (status !== 429 && status !== 503) return null;
-  if (code === "visitor_limit") return null;
+  if (code === "visitor_limit" || code === "pictures_unavailable") return null;
   if (retriesSoFar >= MAX_AUTO_RETRIES) return null;
   const wait = retryAfterSeconds && retryAfterSeconds > 0 ? retryAfterSeconds + 1 : DEFAULT_BUSY_WAIT_SECONDS;
   return Math.min(wait, MAX_BUSY_WAIT_SECONDS);

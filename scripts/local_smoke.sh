@@ -131,6 +131,29 @@ check "DELETE api/stories/<bad id> -> 404" 404 "$(code -X DELETE -H "Cookie: $AL
 check "shared link malformed -> 404"    404 "$(code $WEB/api/shared/not-a-token)"
 check "shared link forged -> 404"       404 "$(code $WEB/api/shared/$(printf 'a%.0s' {1..32}).1800000000.$(printf 'b%.0s' {1..32}))"
 
+echo "--- Speech -> picture (V3)"
+picture() { curl -s -m 60 -X POST $WEB/api/pictures -H 'Content-Type: application/json' -H "Cookie: $1" -d "{\"prompt\":\"$2\"}"; }
+check "api/pictures signed out -> 401"  "sign_in_required|None" "$(picture 'sw_session=forged.cookie.value' 'draw a cat' | problem window)"
+# Nothing left once "draw me please" is taken out: refused before any model call or limit.
+check "api/pictures nothing to draw -> 422" "nothing_to_draw|None" "$(picture "$BOB" 'draw me please' | problem window)"
+check "api/pictures unsafe -> 422"      "unsafe_input|urls" "$(picture "$BOB" 'draw www.example.com' | problem category)"
+# A real picture: Prompt Guard + safeguard (2 small Groq calls), then the worker draws it on the local GPU.
+drawn=$(picture "$BOB" 'Can you draw me a purple dragon, please?')
+PIC=$(echo "$drawn" | python -I -c 'import json,sys;print(json.load(sys.stdin).get("story_id",""))' 2>/dev/null)
+pic_state=""
+for _ in $(seq 1 60); do
+  pic_state=$(curl -s -m 30 -H "Cookie: $BOB" "$WEB/api/stories/$PIC" | python -I -c '
+import json, sys
+d = json.load(sys.stdin)
+s = d.get("scenes") or [{}]
+print(d.get("kind"), d.get("title"), len(s), s[0].get("image_status"), bool(s[0].get("image_url")), sep="|")' 2>/dev/null)
+  case "$pic_state" in *"|pending|"*|"") sleep 3 ;; *) break ;; esac
+done
+check "api/pictures draws one page"     "picture|A purple dragon|1|ready|True" "$pic_state"
+check "picture is the parent's only"    404 "$(code -H "Cookie: $ALICE" $WEB/api/stories/$PIC)"
+check "picture listed as a picture"     True "$(curl -s -m 30 -H "Cookie: $BOB" $WEB/api/stories | python -I -c 'import json,sys;print(any(s["id"]==sys.argv[1] and s["kind"]=="picture" for s in json.load(sys.stdin)["stories"]))' "$PIC" 2>/dev/null)"
+check "DELETE picture -> 204"           204 "$(code -X DELETE -H "Cookie: $BOB" $WEB/api/stories/$PIC)"
+
 echo "--- Frontend"
 check "home page 200"                   200 "$(code $WEB/)"
 check "status page 200"                 200 "$(code $WEB/status)"

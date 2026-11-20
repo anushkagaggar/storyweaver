@@ -625,7 +625,16 @@ Every version follows the **release process in §11**. Each version lists **buil
       polled Postgres every 1 s, so the database never suspended. Now an idle lane sleeps until
       `Worker.wake()` (after a story is enqueued, and after every finished job) or until its next deferred job
       is due; the expiry sweep runs every 6 h instead of hourly (each wake-up costs ~5 min of compute).
-- [ ] Speech → image path ("draw a purple dragon").
+- [x] Speech → image path ("draw a purple dragon"). Done 20 Nov 2026: `POST /v1/pictures` makes a one-page
+      story of `kind` `picture` (migration 0005, expand-only), so owners, share links, deletion, expiry and
+      "My stories" all apply. The words (typed, or said into the same microphone and transcribed) lose their
+      request phrases deterministically (`orchestrator/picture_request.py`: "can you draw me a purple dragon,
+      please?" → "a purple dragon"; no LLM tokens), pass the same input checks as a story (brands refused: no
+      planner to swap in original characters), then one `image` job draws it with the picture self-check
+      looking for exactly what was asked. No narration. Own per-parent limit (10 an hour, 30 a day); the
+      daily GPU budget still caps everything. Frontend: a "A story / A picture" switch on the home form
+      (`/api/pictures`). Measured locally: Whisper heard the smoke recording, its words were drawn and
+      checked in 11 s (SD 1.5, CPU check); 7 new smoke checks (71 in all).
 - [ ] MCP: `illustrate`.
 - [ ] **Start the synthetic data generator** (§7), running daily, quota-paced.
 

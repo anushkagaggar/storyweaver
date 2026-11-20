@@ -24,8 +24,12 @@ export type ImageStatus = "none" | "pending" | "ready" | "placeholder" | "failed
 
 export type Character = { id: string; name: string; species: string; visual: string };
 
+/** "picture": one page drawn from a request like "draw a purple dragon" (no narration, no moral). */
+export type StoryKind = "story" | "picture";
+
 export type Story = {
   id: string;
+  kind: StoryKind;
   status: StoryStatus;
   age_band: string;
   num_scenes: number;
@@ -46,7 +50,13 @@ export type Story = {
 export type CreateStoryResponse = { story_id: string; job_id: string; status: StoryStatus };
 
 /** One row of "My stories" (GET /api/stories). The title is set once the story is ready. */
-export type StorySummary = { id: string; status: StoryStatus | "deleting"; title: string | null; created_at: string };
+export type StorySummary = {
+  id: string;
+  kind: StoryKind;
+  status: StoryStatus | "deleting";
+  title: string | null;
+  created_at: string;
+};
 
 /** A read-only link to a story (POST /api/stories/{id}/share). It stops working at expires_at and is never renewed. */
 export type ShareLink = { token: string; expires_at: string };
@@ -73,6 +83,8 @@ export const MAX_AUDIO_BYTES = 4_000_000;
 export const MAX_RECORDING_SECONDS = 55;
 
 export const MAX_PROMPT_LENGTH = 500;
+/** What to draw ("draw a purple dragon"): the backend accepts up to 300 characters. */
+export const MAX_PICTURE_PROMPT_LENGTH = 300;
 export const MIN_PROMPT_LENGTH = 3;
 export const SCENE_CHOICES = [5, 6] as const;
 export type SceneChoice = (typeof SCENE_CHOICES)[number];

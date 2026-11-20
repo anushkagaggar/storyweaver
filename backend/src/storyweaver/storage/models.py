@@ -62,6 +62,11 @@ class ImageStatus(StrEnum):
     FAILED = "failed"  # not even the placeholder could be stored; the page reads fine without it
 
 
+class StoryKind(StrEnum):
+    STORY = "story"
+    PICTURE = "picture"
+
+
 class JobKind(StrEnum):
     PLAN = "plan"
     TTS = "tts"  # narrate one scene: payload {"story_id", "idx"}
@@ -108,6 +113,9 @@ class StoryRow(_Timestamps, Base):
     # V3 (migration 0004): the signed-in user's pseudonymous id, or "operator" for API-key-only callers
     # (auth/user_token.py). NULL for stories made before V3: nobody owns them, so nobody can open them.
     owner_id: Mapped[str | None] = mapped_column(String(64))
+    # V3 (migration 0005): "story", or "picture" for one page drawn from a request like "draw a purple
+    # dragon" (no planner, no narration; orchestrator/picture_request.py).
+    kind: Mapped[str] = mapped_column(String(16), default=StoryKind.STORY, server_default=StoryKind.STORY)
 
     characters: Mapped[list["CharacterRow"]] = relationship(
         back_populates="story", cascade="all, delete-orphan", order_by="CharacterRow.position"

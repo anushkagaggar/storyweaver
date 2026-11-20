@@ -47,8 +47,12 @@ class VisitorLimiter:
         per_day: int,
         secret: str,
         clock: Callable[[], float] = time.time,
+        namespace: str = "visitor",
     ) -> None:
+        """`namespace` keeps separate counters per kind of request (stories: "visitor", pictures:
+        "pictures"); the default is the stories' original key, so their counts carry over."""
         self._store = store
+        self._namespace = namespace
         self._limits = [Limit("requests", HOUR, per_hour), Limit("requests", DAY, per_day)]
         self._secret = secret.encode()
         self._clock = clock
@@ -62,7 +66,7 @@ class VisitorLimiter:
     async def acquire(self, identity: str | None) -> None:
         """Count one story for this user, or raise LimitExceededError."""
         result = await self._store.reserve(
-            f"visitor:{self.visitor_key(identity)}", self._limits, Usage(requests=1), self._clock()
+            f"{self._namespace}:{self.visitor_key(identity)}", self._limits, Usage(requests=1), self._clock()
         )
         if isinstance(result, Blocked):
             raise LimitExceededError(result.retry_after_seconds, _window(result.limit))

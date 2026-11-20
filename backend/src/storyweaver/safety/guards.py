@@ -43,6 +43,8 @@ INPUT_CATEGORY_MESSAGES: dict[str, str] = {
     "self_harm_or_drugs": "This idea includes topics that aren't suitable for young children. "
     "Please try a different idea.",
     "hate": "Our stories are kind to everyone. Try an idea about being different and being friends.",
+    "picture_brands": "We can't draw characters from films, TV, games or shops. "
+    "Try describing your own, like a brave little robot with a red scarf.",
     "real_people": "We can't make stories about real people. Try a made-up character instead, "
     "like a bunny who dreams of being a singer.",
     "urls": "Links and web addresses can't be used in a story idea.",

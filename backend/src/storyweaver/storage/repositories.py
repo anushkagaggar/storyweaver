@@ -15,6 +15,7 @@ from storyweaver.storage.models import (
     ImageStatus,
     SceneRow,
     SceneStatus,
+    StoryKind,
     StoryRow,
     StoryStatus,
 )
@@ -34,9 +35,11 @@ class StoryRepository:
         request_hash: str | None = None,
         adaptation: str | None = None,
         owner_id: str | None = None,
+        kind: str = StoryKind.STORY,
     ) -> StoryRow:
         row = StoryRow(
             owner_id=owner_id,
+            kind=kind,
             prompt_text=prompt_text,
             age_band=age_band,
             num_scenes=num_scenes,

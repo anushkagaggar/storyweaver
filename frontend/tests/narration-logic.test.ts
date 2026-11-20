@@ -24,6 +24,7 @@ function scene(
 function story(scenes: Scene[], status: Story["status"] = "ready"): Story {
   return {
     id: "s",
+    kind: "story",
     status,
     age_band: "4-6",
     num_scenes: scenes.length,

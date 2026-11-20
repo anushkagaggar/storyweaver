@@ -1,5 +1,8 @@
 """Story endpoints (plan §6.8): POST/GET /v1/stories, GET/DELETE /v1/stories/{id}, POST
-/v1/stories/{id}/share, GET /v1/shared/{token}, GET /v1/jobs/{id}.
+/v1/stories/{id}/share, GET /v1/shared/{token}, GET /v1/jobs/{id}, and POST /v1/pictures.
+
+A picture ("draw a purple dragon", V3) is a one-page story of kind "picture": it is read, listed, shared and
+deleted through the same story endpoints.
 
 Every story has an owner (auth/user_token.py): the signed-in user, from X-User-Token, or the operator for
 API-key-only callers. Only the owner can read, list, share or delete a story; a share link lets anyone read
@@ -31,8 +34,11 @@ from storyweaver.domain.story import AgeBand, Line, SceneCount
 from storyweaver.jobs.queue import JobQueue
 from storyweaver.orchestrator.story_deletion import StoryInProgressError
 from storyweaver.orchestrator.story_service import (
+    AcceptedStory,
     IdempotencyConflictError,
+    PicturesUnavailableError,
     SafetyUnavailableError,
+    UnclearPictureError,
     UnsafeInputError,
 )
 from storyweaver.routing.limits import LimitExceededError
@@ -62,6 +68,19 @@ class CreateStoryRequest(BaseModel):
         if len(value) < 3:
             raise ValueError("prompt must contain at least 3 characters")
         return value
+
+
+class CreatePictureRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    prompt: str = Field(
+        min_length=3, max_length=300, description='What to draw, as said or typed: "draw a purple dragon".'
+    )
+
+    @field_validator("prompt")
+    @classmethod
+    def _strip(cls, value: str) -> str:
+        return " ".join(value.split())
 
 
 class CreateStoryResponse(BaseModel):
@@ -101,6 +120,11 @@ ADAPTATION_NOTICES = {
 }
 
 
+PICTURE_LIMIT_MESSAGES = {
+    "hour": "You've drawn lots of pictures this hour! Please come back in a little while for more.",
+    "day": "That's all the pictures for today. Please come back tomorrow for more.",
+}
+
 VISITOR_LIMIT_MESSAGES = {
     "hour": "You've made lots of stories this hour! Please come back in a little while for more.",
     "day": "That's all the stories for today. Please come back tomorrow for more.",
@@ -114,6 +138,7 @@ class StoryError(BaseModel):
 
 class StoryOut(BaseModel):
     id: uuid.UUID
+    kind: str  # "story", or "picture" for one page drawn from a request
     status: str
     age_band: str
     num_scenes: int
@@ -132,6 +157,7 @@ class StoryOut(BaseModel):
 
 class StorySummaryOut(BaseModel):
     id: uuid.UUID
+    kind: str
     status: str
     title: str | None  # set once the story is ready
     created_at: datetime
@@ -188,15 +214,72 @@ async def create_story(
             idempotency_key=idempotency_key,
             owner_id=owner,
         )
-    except LimitExceededError as exc:
+    except (LimitExceededError, UnsafeInputError, SafetyUnavailableError, IdempotencyConflictError) as exc:
+        return _creation_problem(request, exc, VISITOR_LIMIT_MESSAGES)
+    return _accepted(response, accepted)
+
+
+@router.post(
+    "/pictures",
+    status_code=status.HTTP_202_ACCEPTED,
+    responses={
+        422: {"description": "Invalid body, nothing to draw, unsafe idea, or Idempotency-Key reused"},
+        429: {"description": "Too many pictures, or safety-check quota reached; see Retry-After"},
+        503: {"description": "Pictures or the safety check unavailable; see Retry-After"},
+    },
+    response_model=CreateStoryResponse,
+)
+async def create_picture(
+    body: CreatePictureRequest,
+    request: Request,
+    response: Response,
+    stories: StoryServiceDep,
+    owner: OwnerDep,
+    idempotency_key: IdempotencyKey = None,
+) -> CreateStoryResponse | JSONResponse:
+    """One picture from words like "draw a purple dragon". Read it with GET /v1/stories/{story_id}."""
+    try:
+        accepted = await stories.create_picture(
+            prompt=body.prompt, idempotency_key=idempotency_key, owner_id=owner
+        )
+    except PicturesUnavailableError:
+        return problem_response(
+            request,
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Pictures aren't available right now. Please try again later.",
+            headers={"Retry-After": "300"},
+            extra={"code": "pictures_unavailable"},
+        )
+    except UnclearPictureError:
+        return problem_response(
+            request,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            'Please say what to draw, for example "a purple dragon".',
+            extra={"code": "nothing_to_draw"},
+        )
+    except (LimitExceededError, UnsafeInputError, SafetyUnavailableError, IdempotencyConflictError) as exc:
+        return _creation_problem(request, exc, PICTURE_LIMIT_MESSAGES)
+    return _accepted(response, accepted)
+
+
+def _accepted(response: Response, accepted: AcceptedStory) -> CreateStoryResponse:
+    response.headers["Location"] = f"/v1/stories/{accepted.story_id}"
+    if accepted.replayed:
+        response.headers["Idempotent-Replayed"] = "true"
+    return CreateStoryResponse(story_id=accepted.story_id, job_id=accepted.job_id, status=accepted.status)
+
+
+def _creation_problem(request: Request, exc: Exception, limit_messages: dict[str, str]) -> JSONResponse:
+    """The answer for a story or picture request that was refused before anything was stored."""
+    if isinstance(exc, LimitExceededError):
         return problem_response(
             request,
             status.HTTP_429_TOO_MANY_REQUESTS,
-            VISITOR_LIMIT_MESSAGES[exc.window],
+            limit_messages[exc.window],
             headers={"Retry-After": str(max(1, round(exc.retry_after_seconds)))},
             extra={"code": "visitor_limit", "window": exc.window},
         )
-    except UnsafeInputError as exc:
+    if isinstance(exc, UnsafeInputError):
         verdict = exc.verdict
         return problem_response(
             request,
@@ -204,7 +287,7 @@ async def create_story(
             verdict.message,
             extra={"code": "unsafe_input", "category": verdict.category, "reason": verdict.reason},
         )
-    except SafetyUnavailableError as exc:
+    if isinstance(exc, SafetyUnavailableError):
         quota = "quota" in exc.reason or "rate limited" in exc.reason
         return problem_response(
             request,
@@ -215,15 +298,11 @@ async def create_story(
             headers={"Retry-After": str(max(1, round(exc.retry_after_seconds)))},
             extra={"code": "safety_check_unavailable"},
         )
-    except IdempotencyConflictError as exc:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_CONTENT,
-            "This Idempotency-Key was already used with a different request.",
-        ) from exc
-    response.headers["Location"] = f"/v1/stories/{accepted.story_id}"
-    if accepted.replayed:
-        response.headers["Idempotent-Replayed"] = "true"
-    return CreateStoryResponse(story_id=accepted.story_id, job_id=accepted.job_id, status=accepted.status)
+    return problem_response(
+        request,
+        status.HTTP_422_UNPROCESSABLE_CONTENT,
+        "This Idempotency-Key was already used with a different request.",
+    )
 
 
 @router.get("/stories")
@@ -237,6 +316,7 @@ async def list_stories(
         stories=[
             StorySummaryOut(
                 id=row.id,
+                kind=row.kind,
                 status=row.status,
                 title=row.title if row.status == StoryStatus.READY else None,
                 created_at=row.created_at,
@@ -321,6 +401,7 @@ def _story_out(story: StoryRow, blobs: BlobStore | None, ttl: int) -> StoryOut:
     visible = story.status == StoryStatus.READY
     return StoryOut(
         id=story.id,
+        kind=story.kind,
         status=story.status,
         age_band=story.age_band,
         num_scenes=story.num_scenes,

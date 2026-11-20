@@ -136,6 +136,9 @@ class Settings(BaseSettings):
     # picture one HF account's ZeroGPU quota, so one user must not use up the day for everyone.
     visitor_stories_per_hour: int = Field(default=5, ge=1)
     visitor_stories_per_day: int = Field(default=15, ge=1)
+    # Single pictures ("draw a purple dragon") count separately: each is one GPU call, not a story.
+    visitor_pictures_per_hour: int = Field(default=10, ge=1)
+    visitor_pictures_per_day: int = Field(default=30, ge=1)
     gpu_seconds_per_day: int = Field(default=900, ge=0)  # 15 min, below the account's ZeroGPU allowance
     gpu_seconds_per_image: float = Field(default=12.0, gt=0)  # booked before each call, then settled
     # Delete stories (rows and audio) this many days after creation; 0 keeps them forever (docs/privacy.md).

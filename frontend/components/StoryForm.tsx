@@ -4,21 +4,41 @@ import { useRouter } from "next/navigation";
 import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 
 import { MicRecorder } from "@/components/MicRecorder";
-import { createStory } from "@/lib/story-client";
-import { autoRetryDelaySeconds, busyCountdownMessage, validatePrompt } from "@/lib/story-logic";
-import { MAX_PROMPT_LENGTH, SCENE_CHOICES, type SceneChoice } from "@/lib/story-types";
+import { createPicture, createStory } from "@/lib/story-client";
+import {
+  autoRetryDelaySeconds,
+  busyCountdownMessage,
+  FORM_COPY,
+  validatePicturePrompt,
+  validatePrompt,
+} from "@/lib/story-logic";
+import {
+  MAX_PICTURE_PROMPT_LENGTH,
+  MAX_PROMPT_LENGTH,
+  SCENE_CHOICES,
+  type SceneChoice,
+  type StoryKind,
+} from "@/lib/story-types";
 
 export function StoryForm() {
   const router = useRouter();
   const promptId = useId();
   const [prompt, setPrompt] = useState("");
+  // A whole story, or one picture ("draw a purple dragon", typed or said into the microphone).
+  const [kind, setKind] = useState<StoryKind>("story");
   const [scenes, setScenes] = useState<SceneChoice>(5);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   // Seconds left before the form resubmits a "busy" idea on its own; null when not waiting.
   const [busyWait, setBusyWait] = useState<number | null>(null);
   // One key per distinct request: a double-click or a retry of the same idea never creates two stories.
-  const attempt = useRef<{ key: string; signature: string; prompt: string; scenes: SceneChoice } | null>(null);
+  const attempt = useRef<{
+    key: string;
+    signature: string;
+    kind: StoryKind;
+    prompt: string;
+    scenes: SceneChoice;
+  } | null>(null);
   const autoRetries = useRef(0);
   // The message to show if the parent cancels the wait.
   const busyMessage = useRef("");
@@ -28,7 +48,10 @@ export function StoryForm() {
     if (!current) return;
     setSubmitting(true);
     setError(null);
-    const result = await createStory(current.prompt, current.scenes, current.key);
+    const result =
+      current.kind === "picture"
+        ? await createPicture(current.prompt, current.key)
+        : await createStory(current.prompt, current.scenes, current.key);
     if (result.ok) {
       router.push(`/story/${result.value.story_id}`);
       return;
@@ -69,49 +92,73 @@ export function StoryForm() {
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const problem = validatePrompt(prompt);
+    const problem = kind === "picture" ? validatePicturePrompt(prompt) : validatePrompt(prompt);
     if (problem) {
       setError(problem);
       return;
     }
     const trimmed = prompt.trim();
-    const signature = `${trimmed}|${scenes}`;
+    const signature = `${kind}|${trimmed}|${scenes}`;
     if (attempt.current?.signature !== signature) {
-      attempt.current = { key: crypto.randomUUID(), signature, prompt: trimmed, scenes };
+      attempt.current = { key: crypto.randomUUID(), signature, kind, prompt: trimmed, scenes };
     }
     autoRetries.current = 0;
     await send();
   }
 
+  const copy = FORM_COPY[kind];
+  const maxLength = kind === "picture" ? MAX_PICTURE_PROMPT_LENGTH : MAX_PROMPT_LENGTH;
+
   return (
     <form className="story-form" onSubmit={onSubmit} noValidate>
-      <label htmlFor={promptId}>What should tonight&apos;s story be about?</label>
+      <fieldset disabled={submitting}>
+        <legend>What shall we make?</legend>
+        <label className="choice">
+          <input type="radio" name="kind" value="story" checked={kind === "story"} onChange={() => setKind("story")} />
+          A story
+        </label>
+        <label className="choice">
+          <input
+            type="radio"
+            name="kind"
+            value="picture"
+            checked={kind === "picture"}
+            onChange={() => setKind("picture")}
+          />
+          A picture
+        </label>
+      </fieldset>
+
+      <label htmlFor={promptId}>{copy.label}</label>
       <textarea
         id={promptId}
         value={prompt}
         onChange={(e) => setPrompt(e.target.value)}
-        maxLength={MAX_PROMPT_LENGTH}
-        rows={3}
-        placeholder="A little dragon who is scared of the dark"
+        maxLength={maxLength}
+        rows={kind === "picture" ? 2 : 3}
+        placeholder={copy.placeholder}
         aria-describedby={`${promptId}-count`}
         disabled={submitting}
         required
       />
       <p id={`${promptId}-count`} className="hint">
-        {prompt.length}/{MAX_PROMPT_LENGTH}
+        {prompt.length}/{maxLength}
+        {kind === "picture" && " · You can also say it: \"draw a purple dragon\""}
       </p>
 
-      <MicRecorder disabled={submitting} onTranscript={(text) => setPrompt(text.slice(0, MAX_PROMPT_LENGTH))} />
+      <MicRecorder disabled={submitting} onTranscript={(text) => setPrompt(text.slice(0, maxLength))} />
 
-      <fieldset disabled={submitting}>
-        <legend>How many pages?</legend>
-        {SCENE_CHOICES.map((n) => (
-          <label key={n} className="choice">
-            <input type="radio" name="scenes" value={n} checked={scenes === n} onChange={() => setScenes(n)} />
-            {n} pages
-          </label>
-        ))}
-      </fieldset>
+      {kind === "story" && (
+        <fieldset disabled={submitting}>
+          <legend>How many pages?</legend>
+          {SCENE_CHOICES.map((n) => (
+            <label key={n} className="choice">
+              <input type="radio" name="scenes" value={n} checked={scenes === n} onChange={() => setScenes(n)} />
+              {n} pages
+            </label>
+          ))}
+        </fieldset>
+      )}
 
       {busyWait !== null && (
         <p className="hint" aria-live="off">
@@ -127,7 +174,7 @@ export function StoryForm() {
         </p>
       )}
       <button type="submit" disabled={submitting}>
-        {busyWait !== null ? "Waiting for the storyteller…" : submitting ? "Starting your story…" : "Make my story"}
+        {busyWait !== null ? "Waiting for the storyteller…" : submitting ? copy.submitting : copy.submit}
       </button>
     </form>
   );
