@@ -79,7 +79,7 @@ docker run --rm --gpus=all nvcr.io/nvidia/k8s/cuda-sample:nbody nbody -gpu -benc
 | Text embeddings | `BAAI/bge-small-en-v1.5` | MIT | CPU (Space + local) | Groq has no embeddings API |
 | Re-ranker | `BAAI/bge-reranker-base` | MIT | CPU | Not on Groq |
 | Image embeddings (character consistency) | `google/siglip-base-patch16-224` | Apache-2.0 | CPU / ZeroGPU | Not on Groq |
-| Image self-check (cheap) | `microsoft/Florence-2-base` | MIT | ZeroGPU / local | Saves Groq vision tokens: 5 images × 2,048 tokens would exceed 8K TPM |
+| Image self-check (cheap) | `microsoft/Florence-2-base` (as `florence-community/Florence-2-base`, native transformers) | MIT | ZeroGPU / local | Saves Groq vision tokens: 5 images × 2,048 tokens would exceed 8K TPM |
 | **Your fine-tuned model** | **Qwen3-4B-Instruct-2507**, distilled from gpt-oss-120b | Apache-2.0 | ZeroGPU Space / local (Ollama GGUF) | Groq hosts custom LoRAs only for Enterprise |
 | Stretch fine-tune (same family as the Groq planner) | `openai/gpt-oss-20b` QLoRA | Apache-2.0 | Colab/Kaggle T4. Unsloth says about 14 GB; one report says it fails on T4 *(unverified)* | Same reason |
 | TTS fallback | **Kokoro-82M** | Apache-2.0 | CPU | Covers the tiny Orpheus quota |
@@ -568,7 +568,19 @@ Every version follows the **release process in §11**. Each version lists **buil
       offload the IP-Adapter pushed the api past Docker's 7.35 GB RAM and it was killed. Measured: the same
       fox on 5 of 5 pages; text in 5 s, first picture 15 s, all five in 41 s. Still weak: secondary characters
       and scene details (SD 1.5 with several characters, risk #14); the Florence-2 check and SDXL are next.
-- [ ] Florence-2 image self-check with up to 2 retries.
+- [x] Florence-2 image self-check with up to 2 retries. Done 20 Nov 2026 (`imaging/picture_check.py`,
+      `IMAGE_CHECK`, on by default for sd15/sdxl): Florence-2 base (the `florence-community` native-transformers
+      copy, MIT) captions each picture and SigLIP base (Apache-2.0) scores it against the main character's
+      `visual`; it fails when the caption has an unsafe word (blood, weapons, nudity, ...; fairy-tale props
+      allowed) or when *both* SigLIP < 0.5 and the caption misses the character's head noun. A failed picture
+      is redrawn inside the same drawing call with seed + 1009·n, at most twice; then the closest safe one is
+      kept, or ImageRejectedError (placeholder) if none was safe. The check's models, threshold and redraw count
+      are in `GenerationParams`, so the cache key stays honest. On ZeroGPU it runs on the GPU in the same
+      `@spaces.GPU` call (duration 30 → 45 s for the worst case); locally on the CPU (SD 1.5 fills the card).
+      Measured locally: 3.4–6.6 s a check; a real 5-page hedgehog story passed every page first time (SigLIP
+      0.87–0.99), first picture 13 s after its text, all five 52 s after; a page without its character
+      redrew twice (SigLIP 0.000) and kept the closest in 28 s. SD 1.5's foxes lost the green hat (SigLIP
+      0.05–0.36) but passed on the caption's "fox". Still to measure on ZeroGPU: the probe's three pages.
 - [x] Pipeline ordering: scene 1 TTS and image first; the other scenes queued. Done 15 Nov 2026: one `image`
       job per scene, in its own worker lane (`plan`, `tts` and `image` lanes each claim only their kind).
 - [x] Content-addressed image cache. Done 15 Nov 2026, wider than planned: the key hashes *every* field of

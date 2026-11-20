@@ -44,6 +44,13 @@ class GenerationParams:
     reference_sha256: str | None = None  # the IP-Adapter reference image (scene 1's), by content
     reference_scale: float | None = None
     reference_model: str | None = None  # the IP-Adapter weights (repo@revision:file)
+    # The picture self-check (imaging/picture_check.py). With `check_model` set, the engine captions each
+    # picture and redraws a failed one with the next seed, up to `max_redraws` times, so these settings
+    # decide which picture is kept. `subject` is the main character's fixed look that must be visible.
+    subject: str | None = None
+    check_model: str | None = None
+    check_threshold: float | None = None
+    max_redraws: int = 0
     pipeline_version: int = PIPELINE_VERSION
 
     def to_json(self) -> str:
@@ -52,6 +59,15 @@ class GenerationParams:
     @classmethod
     def from_json(cls, data: str) -> "GenerationParams":
         return cls(**json.loads(data))
+
+
+# Redraw n uses seed + n * REDRAW_SEED_STEP: far from the next page's seed (seed + 1), so a redraw never
+# repeats a neighbouring page's composition.
+REDRAW_SEED_STEP = 1009
+
+
+def redraw_seed(params: GenerationParams, redraw: int) -> int:
+    return params.seed + redraw * REDRAW_SEED_STEP
 
 
 def cache_key(params: GenerationParams) -> str:

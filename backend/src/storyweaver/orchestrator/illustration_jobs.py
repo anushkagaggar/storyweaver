@@ -10,11 +10,13 @@ but before the database was updated finishes on its next attempt without generat
 Character consistency (plan §6.5): every prompt carries the main character's fixed look, and its seed
 (plus the page number) is fixed per story. Later pages also use page 1's picture as an IP-Adapter reference
 when they share its main character, so they wait (deferred, no attempt used) until page 1 is done. The
-reference's sha256 and strength are part of the cache key.
+reference's sha256 and strength are part of the cache key. With the picture self-check on, the engine
+captions each picture and redraws one that is unsafe or doesn't show that look (imaging/picture_check.py).
 
 Failures:
 - no GPU budget left (ours or ZeroGPU's): the placeholder now, no retries;
-- the model's safety checker flagged the picture: the placeholder now, no retries (same seed, same picture);
+- every drawing unsafe (the model's safety checker, or the picture check's caption, which redraws with new
+  seeds first): the placeholder now, no job retries (same settings, same pictures);
 - a transient GPU or endpoint failure: retried with backoff, the placeholder on the last attempt;
 - object storage failing: retried; on the final failure the page is marked image_failed and reads fine.
 
@@ -65,6 +67,11 @@ class ImageSettings:
     # this strength. None turns it off (the engine has no IP-Adapter, e.g. the placeholder).
     reference_scale: float | None = None
     reference_model: str | None = None  # which IP-Adapter weights, part of the cache key
+    # The picture self-check (imaging/picture_check.py): None turns it off. With a check, each page names
+    # its main character's look as the subject the picture must show.
+    check_model: str | None = None
+    check_threshold: float | None = None
+    max_redraws: int = 0
 
 
 # How long a later page waits before checking again whether page 1's picture is done.
@@ -144,6 +151,12 @@ def scene_params(
         sampler=settings.sampler,
         steps=settings.steps,
         guidance=settings.guidance,
+        subject=character.visual_desc.strip() or None
+        if character is not None and settings.check_model is not None
+        else None,
+        check_model=settings.check_model,
+        check_threshold=settings.check_threshold if settings.check_model is not None else None,
+        max_redraws=settings.max_redraws if settings.check_model is not None else 0,
     )
 
 

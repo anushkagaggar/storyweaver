@@ -7,7 +7,11 @@ For local Docker on a 6 GB card (the RTX 4050), never for the ZeroGPU Space, whe
   GPU at a time) when IMAGE_CPU_OFFLOAD=true or the GPU is too full;
 - VAE tiling, so decoding a large picture doesn't spike memory.
 
-The model's own safety checker stays on: a flagged picture raises ImageRejectedError and is thrown away.
+The model's own safety checker stays on: a flagged picture is thrown away, never stored.
+
+With a picture check (imaging/picture_check.py) and `params.check_model` set, each picture is captioned and
+scored; a failed one (unsafe, or not showing the main character) is redrawn with the next seed, up to
+`params.max_redraws` times. If none passes, the closest safe one is kept; if none is safe, ImageRejectedError.
 
 Later pages use page 1's picture as an IP-Adapter reference (character consistency, plan §6.5).
 
@@ -28,12 +32,15 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from PIL import Image
 
 from storyweaver.imaging.generator import ImageRejectedError, ImageUnavailableError
-from storyweaver.imaging.params import GenerationParams
+from storyweaver.imaging.params import GenerationParams, redraw_seed
+
+if TYPE_CHECKING:
+    from storyweaver.imaging.picture_check import PictureChecker, PictureVerdict
 
 logger = logging.getLogger(__name__)
 
@@ -191,10 +198,12 @@ class SD15Local:
         generator_for: Callable[[int], Any] = seeded_generator,
         *,
         name: str = "sd15",
+        checker: "PictureChecker | None" = None,
     ) -> None:
         self._loader = loader
         self._generator_for = generator_for
         self._name = name
+        self._checker = checker
         self._lock = threading.Lock()
         self._loaded: tuple[tuple[str, str, str], Any] | None = None
 
@@ -223,6 +232,8 @@ class SD15Local:
         moved to "cuda" there and ZeroGPU attaches them to the GPU it lends each call."""
         with self._lock:
             self._pipeline((model, revision, sampler))
+        if self._checker is not None:
+            self._checker.load()
 
     async def warm_up(self, model: str, revision: str, sampler: str) -> None:
         """Load the model and draw one tiny throwaway picture, so a story's first page doesn't wait for it.
@@ -247,6 +258,8 @@ class SD15Local:
                 num_inference_steps=1,
                 guidance_scale=1.0,
             )
+            if self._checker is not None:
+                self._checker.load()
             logger.info("Pictures warmed up in %.1f s.", time.monotonic() - started)
 
     def _pipeline(self, wanted: tuple[str, str, str]) -> Any:
@@ -261,39 +274,86 @@ class SD15Local:
 
     def _generate(self, params: GenerationParams, reference: bytes | None) -> bytes:
         with self._lock:
-            try:
-                pipe = self._pipeline((params.model, params.model_revision, params.sampler))
-                # With the adapter loaded, every call needs an image; without a reference it is a blank one
-                # at strength 0, which adds nothing.
-                pipe.set_ip_adapter_scale(params.reference_scale if reference is not None else 0.0)
-                started = time.monotonic()
-                result = pipe(
-                    prompt=params.prompt,
-                    ip_adapter_image=open_png(reference) if reference is not None else no_reference(),
-                    negative_prompt=params.negative_prompt,
-                    width=params.width,
-                    height=params.height,
-                    num_inference_steps=params.steps,
-                    guidance_scale=params.guidance,
-                    generator=self._generator_for(params.seed),
-                )
-            except Exception as exc:
-                if is_out_of_memory(exc):
-                    free_gpu_memory()
-                    raise ImageUnavailableError("the GPU ran out of memory") from exc
-                if isinstance(exc, OSError):  # a download or a cache file failed
-                    raise ImageUnavailableError(f"could not load {params.model}: {exc}") from exc
-                raise
-            if any(getattr(result, "nsfw_content_detected", None) or []):
-                raise ImageRejectedError("flagged by the model's safety checker")
-            logger.info(
-                "Drew a %dx%d picture in %.1f s (%d steps).",
-                params.width,
-                params.height,
-                time.monotonic() - started,
-                params.steps,
+            checker = self._checker if params.check_model is not None else None
+            if params.check_model is not None and checker is None:
+                raise ImageUnavailableError("the picture check is not available on this server")
+            redraws = params.max_redraws if checker is not None else 0
+            closest: tuple[float, bytes] | None = None  # the best safe picture that missed its subject
+            for redraw in range(redraws + 1):
+                image = self._draw(params, reference, redraw_seed(params, redraw))
+                if image is None:
+                    continue  # flagged by the model's safety checker
+                if checker is None:
+                    return to_png(image)
+                verdict = self._check(checker, image, params)
+                if verdict.ok:
+                    if redraw:
+                        logger.info("Redraw %d passed the picture check.", redraw)
+                    return to_png(image)
+                if not verdict.unsafe:
+                    score = verdict.similarity or 0.0
+                    if closest is None or score > closest[0]:
+                        closest = (score, to_png(image))
+            if closest is not None:
+                logger.info("No drawing passed the picture check; keeping the closest one.")
+                return closest[1]
+            raise ImageRejectedError("flagged by the safety checks")
+
+    def _draw(self, params: GenerationParams, reference: bytes | None, seed: int) -> Any | None:
+        """One picture (a PIL image), or None when the model's safety checker flagged it."""
+        try:
+            pipe = self._pipeline((params.model, params.model_revision, params.sampler))
+            # With the adapter loaded, every call needs an image; without a reference it is a blank one
+            # at strength 0, which adds nothing.
+            pipe.set_ip_adapter_scale(params.reference_scale if reference is not None else 0.0)
+            started = time.monotonic()
+            result = pipe(
+                prompt=params.prompt,
+                ip_adapter_image=open_png(reference) if reference is not None else no_reference(),
+                negative_prompt=params.negative_prompt,
+                width=params.width,
+                height=params.height,
+                num_inference_steps=params.steps,
+                guidance_scale=params.guidance,
+                generator=self._generator_for(seed),
             )
-            return to_png(result.images[0])
+        except Exception as exc:
+            unavailable = _unavailable(exc, f"could not load {params.model}")
+            if unavailable is None:
+                raise
+            raise unavailable from exc
+        if any(getattr(result, "nsfw_content_detected", None) or []):
+            logger.warning("The model's safety checker flagged a picture (seed %d).", seed)
+            return None
+        logger.info(
+            "Drew a %dx%d picture in %.1f s (%d steps).",
+            params.width,
+            params.height,
+            time.monotonic() - started,
+            params.steps,
+        )
+        return result.images[0]
+
+    @staticmethod
+    def _check(checker: "PictureChecker", image: Any, params: GenerationParams) -> "PictureVerdict":
+        threshold = params.check_threshold if params.check_threshold is not None else 0.5
+        try:
+            return checker.check(image, params.subject, threshold)
+        except Exception as exc:
+            unavailable = _unavailable(exc, "could not load the picture check")
+            if unavailable is None:
+                raise
+            raise unavailable from exc
+
+
+def _unavailable(exc: Exception, load_failure: str) -> ImageUnavailableError | None:
+    """A GPU or download failure as ImageUnavailableError (worth a retry); None for anything else."""
+    if is_out_of_memory(exc):
+        free_gpu_memory()
+        return ImageUnavailableError("the GPU ran out of memory")
+    if isinstance(exc, OSError):  # a download or a cache file failed
+        return ImageUnavailableError(f"{load_failure}: {exc}")
+    return None
 
 
 if __name__ == "__main__":

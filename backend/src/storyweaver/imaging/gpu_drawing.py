@@ -25,9 +25,11 @@ from storyweaver.storage.blob import BlobError, BlobStore
 
 logger = logging.getLogger(__name__)
 
-# What each call asks ZeroGPU for. SDXL at 1152x896 and 25 steps should take well under 10 s on its GPU;
-# ZeroGPU checks the requested time against the quota left, so asking for much more wastes headroom.
-GPU_DURATION_SECONDS = 30
+# What each call asks ZeroGPU for. SDXL at 1152x896 and 25 steps took 7.9 s on the test Space (20 Nov 2026);
+# with the picture check (well under 1 s on the GPU) and up to 2 redraws, a call can take ~26 s. ZeroGPU
+# checks the requested time against the quota left, so asking for much more wastes headroom; the plan
+# keeps every GPU call under 60 s.
+GPU_DURATION_SECONDS = 45
 
 # Set at start-up (api/main.py); a module global so the ZeroGPU process inherits the loaded pipeline.
 _engine: SD15Local | None = None

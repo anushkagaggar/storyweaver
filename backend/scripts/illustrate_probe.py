@@ -4,13 +4,16 @@ Meant for a temporary *test* Space without a database (so nothing touches real s
 1. GET /v1/gpu-route-check: the Space calls its own `gpu_check` through its public URL with its HF_TOKEN,
    exactly as its worker would call `illustrate`. Proves ZeroGPU accepts the self-call.
 2. Page 1, then page 2 with page 1 as the IP-Adapter reference, drawn by the Space's IMAGE_ENGINE through
-   `illustrate` from here (charged to HF_TOKEN from .env, else ZeroGPU's anonymous quota).
-3. Both pictures are downloaded from the bucket into <out dir> to judge by eye, then deleted from it.
+   `illustrate` from here (charged to HF_TOKEN from .env, else ZeroGPU's anonymous quota). Every page goes
+   through the picture self-check (Florence-2 + SigLIP); page 3's prompt leaves the fox out on purpose, so
+   it fails the check and is redrawn twice: its time is the worst case, which must fit GPU_DURATION_SECONDS.
+3. The pictures are downloaded from the bucket into <out dir> to judge by eye, then deleted from it.
 
     cd backend
     PYTHONPATH=src uv run --frozen --no-sync python scripts/illustrate_probe.py https://<test>.hf.space <out>
 
-Reads from ../.env: PROBE_API_KEY (the test Space's STORYWEAVER_API_KEY; falls back to STORYWEAVER_API_KEY),
+Reads from ../.env: PROBE_API_KEY (the test Space's STORYWEAVER_API_KEY; else, and with --local,
+STORYWEAVER_API_KEY),
 HF_TOKEN (optional) and BACKBLAZE_ID / BACKBLAZE_KEY / BACKBLAZE_ENDPOINT / BACKBLAZE_BUCKET (to fetch the
 pictures and clean up). Prompts and seeds are fixed, so runs are comparable.
 
@@ -32,6 +35,7 @@ from dotenv import dotenv_values
 
 from storyweaver.config import SD15_DEFAULTS, SDXL_DEFAULTS
 from storyweaver.imaging.params import GenerationParams, cache_key, styled_prompt
+from storyweaver.imaging.picture_check import CHECK_MODEL
 from storyweaver.imaging.remote import GradioIllustrator
 from storyweaver.imaging.sd15 import IP_ADAPTER_MODEL
 from storyweaver.imaging.sdxl import SDXL_IP_ADAPTER_MODEL
@@ -41,6 +45,7 @@ FOX = "a small orange fox wearing a green hat"
 PAGES = [
     f"{FOX}, standing in a sunny meadow full of daisies",
     f"{FOX}, helping a little brown owl beside a sparkling stream",
+    "an empty sunny meadow full of daisies under a blue sky",  # no fox: fails the check, redrawn twice
 ]
 
 
@@ -56,6 +61,10 @@ def page_params(idx: int, reference: bytes | None, local: bool) -> GenerationPar
         sampler="dpmpp_2m_karras",
         steps=25,
         guidance=6.0,
+        subject=FOX,
+        check_model=CHECK_MODEL,
+        check_threshold=0.5,
+        max_redraws=2,
     )
     if reference is None:
         return params
@@ -68,7 +77,8 @@ def page_params(idx: int, reference: bytes | None, local: bool) -> GenerationPar
 
 
 async def probe(space: str, out: Path, env: dict[str, str | None], local: bool) -> int:
-    api_key = env.get("PROBE_API_KEY") or env.get("STORYWEAVER_API_KEY") or ""
+    # The test Space has its own key; the local stack uses .env's own.
+    api_key = (None if local else env.get("PROBE_API_KEY")) or env.get("STORYWEAVER_API_KEY") or ""
     hf_token = env.get("HF_TOKEN") or None
     space = space.rstrip("/")
     print(f"HF token: {'yes' if hf_token else 'no (anonymous ZeroGPU quota)'}")
@@ -96,12 +106,13 @@ async def probe(space: str, out: Path, env: dict[str, str | None], local: bool) 
     reference: bytes | None = None
     failures = 0
     try:
-        for idx in (1, 2):
-            params = page_params(idx, reference, local)
+        for idx in (1, 2, 3):
+            page_reference = reference if idx == 2 else None  # only page 2 uses page 1's picture
+            params = page_params(idx, page_reference, local)
             key = image_key(story, cache_key(params))
             started = time.monotonic()
             try:
-                await illustrator.illustrate(story, params, key, reference)
+                await illustrator.illustrate(story, params, key, page_reference)
             except Exception as exc:
                 failures += 1
                 took = time.monotonic() - started
@@ -111,7 +122,7 @@ async def probe(space: str, out: Path, env: dict[str, str | None], local: bool) 
             png = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
             await asyncio.to_thread(path.write_bytes, png)
             print(f"2. page {idx}: drawn and stored in {took:.1f} s -> {path}")
-            reference = png
+            reference = reference or png  # page 1's picture
     finally:
         listed = s3.list_objects_v2(Bucket=bucket, Prefix=story_prefix(story)).get("Contents", [])
         for item in listed:

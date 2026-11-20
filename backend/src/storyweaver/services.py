@@ -17,6 +17,7 @@ from storyweaver.adapters.groq_orpheus import GroqOrpheus
 from storyweaver.adapters.groq_whisper import GroqWhisper
 from storyweaver.adapters.kokoro_tts import Kokoro
 from storyweaver.config import Settings
+from storyweaver.imaging.picture_check import CHECK_MODEL, PictureChecker
 from storyweaver.imaging.remote import GradioIllustrator
 from storyweaver.imaging.sd15 import IP_ADAPTER_MODEL, SD15Local, load_pipeline, nvidia_gpu_present
 from storyweaver.imaging.sdxl import SDXL_IP_ADAPTER_MODEL, load_sdxl_pipeline
@@ -249,10 +250,17 @@ def build_image_engine(settings: Settings) -> SD15Local | None:
     if not settings.spaces_zero_gpu and not nvidia_gpu_present():
         logger.warning("IMAGE_ENGINE=%s but no NVIDIA GPU here; no pictures drawn here.", engine_name)
         return None
+    # The picture check (IMAGE_CHECK) draws next to the model: on ZeroGPU's GPU, locally on the CPU because
+    # SD 1.5 fills the 6 GB card. It loads with the model (at start-up on ZeroGPU, else on warm-up).
+    checker = (
+        PictureChecker(device="cuda" if settings.spaces_zero_gpu else "cpu") if settings.image_check else None
+    )
     if engine_name == "sdxl":
-        engine = SD15Local(loader=load_sdxl_pipeline, name="sdxl")
+        engine = SD15Local(loader=load_sdxl_pipeline, name="sdxl", checker=checker)
     else:
-        engine = SD15Local(loader=functools.partial(load_pipeline, offload=settings.image_cpu_offload))
+        engine = SD15Local(
+            loader=functools.partial(load_pipeline, offload=settings.image_cpu_offload), checker=checker
+        )
     logger.info("Pictures: %s (%s).", engine.name, settings.image_model)
     if settings.spaces_zero_gpu:
         try:
@@ -302,6 +310,7 @@ def image_settings(settings: Settings) -> ImageSettings:
     # sd15 and sdxl have an IP-Adapter; with a strength of 0, later pages needn't wait for page 1.
     consistent = settings.image_engine in ("sd15", "sdxl") and settings.image_reference_scale > 0
     adapter = SDXL_IP_ADAPTER_MODEL if settings.image_engine == "sdxl" else IP_ADAPTER_MODEL
+    checked = settings.image_engine in ("sd15", "sdxl") and settings.image_check
     return ImageSettings(
         model=settings.image_model,
         model_revision=settings.image_model_revision,
@@ -312,6 +321,9 @@ def image_settings(settings: Settings) -> ImageSettings:
         guidance=settings.image_guidance,
         reference_scale=settings.image_reference_scale if consistent else None,
         reference_model=adapter if consistent else None,
+        check_model=CHECK_MODEL if checked else None,
+        check_threshold=settings.image_check_threshold if checked else None,
+        max_redraws=settings.image_max_redraws if checked else 0,
     )
 
 

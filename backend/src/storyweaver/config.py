@@ -112,6 +112,15 @@ class Settings(BaseSettings):
     # sd15 keeps the whole model on the GPU (4.5 GB of a 6 GB card, ~6 s a picture). true moves each part
     # there only while it runs: for smaller GPUs, but slower and ~4 GB more RAM (imaging/sd15.py).
     image_cpu_offload: bool = False
+    # The picture self-check (imaging/picture_check.py, sd15 and sdxl only): Florence-2 captions each picture
+    # and SigLIP checks it shows the main character; an unsafe or off-subject one is redrawn with the next
+    # seed, up to IMAGE_MAX_REDRAWS times. On a ZeroGPU Space it runs on the GPU inside the drawing call;
+    # locally on the CPU (the 6 GB card is full with SD 1.5), where each check adds ~10 s.
+    image_check: bool = True
+    # SigLIP's probability that the picture shows the character's description. Measured: ~0.997 for the
+    # right character, 0.0000 for wrong ones, so the middle is safe. A caption naming it passes too.
+    image_check_threshold: float = Field(default=0.5, gt=0, lt=1)
+    image_max_redraws: int = Field(default=2, ge=0, le=2)
     # Draw through this Space's `illustrate` Gradio endpoint (api/gpu_endpoints.py) instead of in the worker:
     # required on ZeroGPU, where a GPU exists only inside a Gradio call, so on a ZeroGPU Space it defaults to
     # the Space's own https://<SPACE_HOST>. Locally, http://localhost:7860 tests the same route with sd15.

@@ -38,6 +38,10 @@ CHANGES = {
     "reference_sha256": "f" * 64,
     "reference_scale": 0.6,
     "reference_model": "h94/IP-Adapter@abc:ip-adapter-plus_sd15.safetensors",
+    "subject": "a small orange fox wearing a green hat",
+    "check_model": "florence+siglip+check-v1",
+    "check_threshold": 0.3,
+    "max_redraws": 2,
     "pipeline_version": 99,
 }
 
