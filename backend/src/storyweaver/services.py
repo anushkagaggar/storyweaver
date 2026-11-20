@@ -228,6 +228,7 @@ def build_services(settings: Settings, image_engine: SD15Local | None = None) ->
         services.worker = Worker(
             services.sessions, handlers, on_final_failure=make_story_failure_hook(services.sessions)
         )
+        services.stories.on_enqueued = services.worker.wake
     return services
 
 

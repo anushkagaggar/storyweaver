@@ -11,6 +11,7 @@ import hashlib
 import json
 import logging
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from sqlalchemy.exc import IntegrityError
@@ -91,6 +92,8 @@ class StoryService:
         self._sessions = sessions
         self._input_guard = input_guard
         self._visitor_limiter = visitor_limiter
+        # Called after a job is committed, to wake the in-process worker (Worker.wake); it does not poll.
+        self.on_enqueued: Callable[[], None] | None = None
 
     async def create(
         self,
@@ -125,7 +128,7 @@ class StoryService:
                 job = await JobQueue(session).enqueue(
                     JobKind.PLAN, {"story_id": str(story.id)}, story_id=story.id
                 )
-                return AcceptedStory(story.id, job.id, story.status, replayed=False)
+                accepted = AcceptedStory(story.id, job.id, story.status, replayed=False)
         except IntegrityError:
             # A concurrent request with the same Idempotency-Key won the race.
             if idempotency_key is None:
@@ -134,6 +137,9 @@ class StoryService:
             if replay is None:
                 raise
             return replay
+        if self.on_enqueued is not None:
+            self.on_enqueued()
+        return accepted
 
     async def _check_input(self, prompt: str) -> SafetyVerdict:
         if self._input_guard is None:

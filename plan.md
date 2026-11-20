@@ -601,6 +601,10 @@ Every version follows the **release process in §11**. Each version lists **buil
       To run it before the release: a temporary private ZeroGPU test Space without a database, deployed from
       `dev-v3` by a manual run of the deploy workflow (`space_id` input; production still only takes `v*`
       tags), checked with `backend/scripts/illustrate_probe.py` (self-call, then two SDXL pages).
+- [x] **Idle worker leaves Neon alone** (added 20 Nov 2026: Neon warned at 80 of 100 CU-hours). Each lane
+      polled Postgres every 1 s, so the database never suspended. Now an idle lane sleeps until
+      `Worker.wake()` (after a story is enqueued, and after every finished job) or until its next deferred job
+      is due; the expiry sweep runs every 6 h instead of hourly (each wake-up costs ~5 min of compute).
 - [ ] Speech → image path ("draw a purple dragon").
 - [ ] MCP: `illustrate`.
 - [ ] **Start the synthetic data generator** (§7), running daily, quota-paced.

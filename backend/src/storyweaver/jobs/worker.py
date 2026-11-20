@@ -63,6 +63,12 @@ class Worker:
     never holds up planning or illustration. The loops share one event loop, which keeps them independent
     only while handlers never block it: CPU work (Kokoro, Whisper, MP3 encoding) runs in threads, and GPU
     work is an HTTP call to the Gradio endpoint. By default every kind gets its own lane.
+
+    An idle lane does not poll: it sleeps until the next queued job of its kinds is due, or until `wake()`
+    (called after a story is enqueued, and by the worker itself after each job, since a plan job queues
+    narration and pictures). With nothing queued it sleeps until woken, so the database can suspend.
+    Only this process enqueues jobs; a job written by anything else is picked up on the next wake-up,
+    or after `idle_wait_seconds` if that is set.
     """
 
     def __init__(
@@ -73,8 +79,11 @@ class Worker:
         lanes: dict[str, frozenset[JobKind]] | None = None,
         on_final_failure: FailureHook | None = None,
         poll_interval: float = 1.0,
+        idle_wait_seconds: float | None = None,
         stale_after_seconds: int = 600,
     ) -> None:
+        """`poll_interval` is the shortest sleep (and the retry delay after a loop error);
+        `idle_wait_seconds` caps an idle sleep (None: sleep until woken or a queued job is due)."""
         self._sessions = session_factory
         self._handlers = handlers
         self.lanes = lanes or {kind.value: frozenset({kind}) for kind in handlers}
@@ -83,7 +92,14 @@ class Worker:
             raise ValueError(f"Lanes name job kinds without a handler: {sorted(unhandled)}")
         self._on_final_failure = on_final_failure
         self._poll_interval = poll_interval
+        self._idle_wait = idle_wait_seconds
         self._stale_after = stale_after_seconds
+        self._wakeups = {name: asyncio.Event() for name in self.lanes}
+
+    def wake(self) -> None:
+        """Tell every lane to look for jobs now (call after committing an enqueue)."""
+        for event in self._wakeups.values():
+            event.set()
 
     async def run_forever(self, stop: asyncio.Event) -> None:
         logger.info("Job worker started with lanes %s.", sorted(self.lanes))
@@ -95,15 +111,27 @@ class Worker:
         logger.info("Job worker stopped.")
 
     async def _run_lane(self, name: str, kinds: frozenset[JobKind], stop: asyncio.Event) -> None:
+        wakeup = self._wakeups[name]
         while not stop.is_set():
+            wakeup.clear()  # before looking, so a wake() during the look is not lost
+            delay: float | None
             try:
-                processed = await self.run_once(kinds)
+                if await self.run_once(kinds):
+                    self.wake()  # the job may have queued work for other lanes (plan -> tts, image)
+                    continue
+                delay = await self._seconds_until_due(kinds)
             except Exception:
                 logger.exception("Job worker lane %s loop error; continuing.", name)
-                processed = False
-            if not processed:
-                with suppress(TimeoutError):
-                    await asyncio.wait_for(stop.wait(), timeout=self._poll_interval)
+                delay = self._poll_interval
+            if delay is not None:
+                delay = max(delay, self._poll_interval)  # due but locked elsewhere: do not spin
+            if self._idle_wait is not None:
+                delay = self._idle_wait if delay is None else min(delay, self._idle_wait)
+            await _wait_for_either(stop, wakeup, delay)
+
+    async def _seconds_until_due(self, kinds: frozenset[JobKind]) -> float | None:
+        async with self._sessions() as session:
+            return await JobQueue(session).seconds_until_next_due(kinds)
 
     async def run_once(self, kinds: frozenset[JobKind] | None = None) -> bool:
         """Claim and process one due job of `kinds` (default: any handled kind). False when there was none."""
@@ -161,3 +189,15 @@ class Worker:
         logger.warning("Job %s failed permanently (%s).", context.job_id, code)
         if self._on_final_failure is not None:
             await self._on_final_failure(context, code, detail)
+
+
+async def _wait_for_either(first: asyncio.Event, second: asyncio.Event, seconds: float | None) -> None:
+    """Return when either event is set, or after `seconds` (None: no time limit)."""
+    waiters = {asyncio.ensure_future(first.wait()), asyncio.ensure_future(second.wait())}
+    try:
+        await asyncio.wait(waiters, timeout=seconds, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for waiter in waiters:
+            waiter.cancel()
+        with suppress(asyncio.CancelledError):
+            await asyncio.gather(*waiters, return_exceptions=True)

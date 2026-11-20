@@ -131,7 +131,8 @@ class Settings(BaseSettings):
     gpu_seconds_per_image: float = Field(default=12.0, gt=0)  # booked before each call, then settled
     # Delete stories (rows and audio) this many days after creation; 0 keeps them forever (docs/privacy.md).
     story_retention_days: int = Field(default=30, ge=0, le=3650)
-    retention_sweep_seconds: float = Field(default=3600.0, ge=10)
+    # Every 6 h: each sweep wakes the database (Neon bills at least ~5 min of compute per wake-up).
+    retention_sweep_seconds: float = Field(default=21600.0, ge=10)
     # Run the in-process job worker (disabled in tests, which drive the worker directly).
     worker_enabled: bool = True
 

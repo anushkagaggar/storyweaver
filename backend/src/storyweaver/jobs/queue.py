@@ -96,6 +96,22 @@ class JobQueue:
         )
         return result.scalar_one_or_none()
 
+    async def seconds_until_next_due(self, kinds: Collection[JobKind] | None = None) -> float | None:
+        """Seconds until the next queued job (of `kinds`) is due (0 if due now); None if none is queued.
+
+        Lets an idle worker sleep until then instead of polling, so the database can suspend (Neon bills
+        compute for every minute it is awake).
+        """
+        conditions = [JobRow.status == JobStatus.QUEUED]
+        if kinds is not None:
+            conditions.append(JobRow.kind.in_([kind.value for kind in kinds]))
+        seconds = (
+            await self._session.execute(
+                select(func.extract("epoch", func.min(JobRow.run_after) - func.now())).where(*conditions)
+            )
+        ).scalar_one_or_none()
+        return None if seconds is None else max(0.0, float(seconds))
+
     async def succeed(self, job: JobRow) -> None:
         job.status = JobStatus.SUCCEEDED
         job.locked_at = None
