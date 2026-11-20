@@ -231,6 +231,9 @@ class IllustrateSceneJob:
         """
         if self._illustrator is None or self._settings.reference_scale is None:
             return None
+        lead = main_character(scene, characters)
+        if lead is not None and lead.ref_image_key:
+            return lead.ref_image_key  # a picture of a character from another story: that story's page 1
         first = min(scenes, key=lambda s: s.idx)
         if scene.idx == first.idx:
             return None
@@ -238,7 +241,7 @@ class IllustrateSceneJob:
             raise DeferJobError(REFERENCE_WAIT_SECONDS, "waiting for page 1's picture")
         if first.image_status != ImageStatus.READY or first.image_key is None:
             return None
-        lead, first_lead = main_character(scene, characters), main_character(first, characters)
+        first_lead = main_character(first, characters)
         if lead is None or first_lead is None or lead.char_key != first_lead.char_key:
             return None
         return first.image_key

@@ -18,6 +18,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from storyweaver.domain.story import AgeBand, SceneCount, Story, character_seed
+from storyweaver.imaging.generator import PNG
 from storyweaver.jobs.queue import JobQueue
 from storyweaver.jobs.worker import (
     DeferJobError,
@@ -29,7 +30,7 @@ from storyweaver.jobs.worker import (
 from storyweaver.llm.client import LLMError, LLMRateLimitedError
 from storyweaver.llm.planner import PlanningError, StoryPlanner, StoryRequest
 from storyweaver.observability.tracing import trace_scope
-from storyweaver.orchestrator.illustration_jobs import mark_scene_image_failed
+from storyweaver.orchestrator.illustration_jobs import main_character, mark_scene_image_failed
 from storyweaver.orchestrator.narration_jobs import StoryNarration, mark_scene_audio_failed
 from storyweaver.orchestrator.picture_request import picture_caption, picture_subject, picture_title
 from storyweaver.routing.limits import VisitorLimiter
@@ -42,6 +43,7 @@ from storyweaver.safety.guards import (
     SafetyCheckError,
     SafetyVerdict,
 )
+from storyweaver.storage.blob import BlobError, BlobStore, reference_image_key
 from storyweaver.storage.models import (
     CharacterRow,
     ImageStatus,
@@ -80,6 +82,19 @@ class PicturesUnavailableError(Exception):
     """This server draws no pictures (no image engine, storage or worker)."""
 
 
+class CharacterNotFoundError(Exception):
+    """No such character in a ready story of the caller's (or no story_id given with a character_id)."""
+
+
+@dataclass(frozen=True)
+class SourceCharacter:
+    name: str
+    species: str
+    visual: str
+    seed: int
+    reference_key: str | None
+
+
 class UnclearPictureError(Exception):
     """Nothing to draw was left once the request words were taken out ("draw", "please")."""
 
@@ -87,6 +102,10 @@ class UnclearPictureError(Exception):
 # The picture's one character: its look is the request, so the self-check looks for what was asked for.
 PICTURE_CHARACTER = "main"
 PICTURE_BRANDS = "picture_brands"
+# A borrowed character's seed is moved past its story's pages (seed + 1..6): with page 1's own seed, the
+# picture copied page 1's layout and ignored the new scene (20 Nov 2026). The fixed look and page 1's
+# picture (the IP-Adapter reference) keep it recognisable instead.
+BORROWED_SEED_OFFSET = 100
 
 
 @dataclass(frozen=True)
@@ -97,10 +116,19 @@ class AcceptedStory:
     replayed: bool
 
 
-def picture_request_hash(subject: str, owner_id: str) -> str:
+def picture_request_hash(
+    subject: str, owner_id: str, story_id: uuid.UUID | None = None, character_id: str | None = None
+) -> str:
     """Never equal to a story's request_hash: an Idempotency-Key reused across the two is a conflict."""
     canonical = json.dumps(
-        {"kind": StoryKind.PICTURE.value, "subject": subject, "owner": owner_id}, sort_keys=True
+        {
+            "kind": StoryKind.PICTURE.value,
+            "subject": subject,
+            "owner": owner_id,
+            "story": str(story_id) if story_id else None,
+            "character": character_id,
+        },
+        sort_keys=True,
     )
     return hashlib.sha256(canonical.encode()).hexdigest()
 
@@ -129,6 +157,8 @@ class StoryService:
         self._picture_limiter = picture_limiter
         # Pictures need the worker and an image engine with somewhere to store them (services.py).
         self.pictures_enabled = pictures_enabled
+        # Where a character's reference picture is copied for a picture of it (set in services.py).
+        self.blobs: BlobStore | None = None
         # Called after a job is committed, to wake the in-process worker (Worker.wake); it does not poll.
         self.on_enqueued: Callable[[], None] | None = None
 
@@ -179,32 +209,47 @@ class StoryService:
         return accepted
 
     async def create_picture(
-        self, *, prompt: str, idempotency_key: str | None, owner_id: str
+        self,
+        *,
+        prompt: str,
+        idempotency_key: str | None,
+        owner_id: str,
+        story_id: uuid.UUID | None = None,
+        character_id: str | None = None,
     ) -> AcceptedStory:
         """One picture from words like "draw a purple dragon" (plan V3, speech -> picture).
 
         A one-page story of kind "picture": the same input checks as a story, then a READY row with one
         scene and one `image` job, so ownership, sharing, deletion, expiry and the picture pipeline (GPU
-        budget, self-check, placeholder) all apply. No planner and no narration. Raises
-        PicturesUnavailableError, UnclearPictureError, UnsafeInputError, LimitExceededError,
-        SafetyUnavailableError or IdempotencyConflictError.
+        budget, self-check, placeholder) all apply. No planner and no narration.
+
+        With `story_id` (and optionally `character_id`, default: the story's first character) it draws that
+        character from one of the caller's own stories (MCP `illustrate`'s character_ref): its fixed look and
+        seed, and the story's page-1 picture as the IP-Adapter reference when that page shows it. Raises
+        PicturesUnavailableError, UnclearPictureError, CharacterNotFoundError, UnsafeInputError,
+        LimitExceededError, SafetyUnavailableError or IdempotencyConflictError.
         """
         if not self.pictures_enabled:
             raise PicturesUnavailableError
         subject = picture_subject(prompt)
         if subject is None:
             raise UnclearPictureError
-        digest = picture_request_hash(subject, owner_id)
+        if character_id is not None and story_id is None:
+            raise CharacterNotFoundError
+        digest = picture_request_hash(subject, owner_id, story_id, character_id)
         if idempotency_key is not None:
             existing = await self._replay(idempotency_key, digest)
             if existing is not None:
                 return existing
+        source = await self._source_character(owner_id, story_id, character_id) if story_id else None
         if self._picture_limiter is not None:
             await self._picture_limiter.acquire(owner_id)
         verdict = await self._check_input(subject)
         if verdict.adaptation == BRANDS:
             # A story's planner swaps in original characters; a picture would have to draw the brand's.
             raise UnsafeInputError(SafetyVerdict(False, stage="policy", category=PICTURE_BRANDS))
+        picture_id = uuid.uuid4()
+        reference = await self._copy_reference(source, picture_id) if source else None
         try:
             async with self._sessions() as session, session.begin():
                 story = await StoryRepository(session).create(
@@ -215,6 +260,7 @@ class StoryService:
                     request_hash=digest,
                     owner_id=owner_id,
                     kind=StoryKind.PICTURE,
+                    story_id=picture_id,
                 )
                 story.title = picture_title(subject)
                 story.status = StoryStatus.READY
@@ -224,10 +270,14 @@ class StoryService:
                             story_id=story.id,
                             char_key=PICTURE_CHARACTER,
                             position=0,
-                            name="",
-                            species="",
-                            visual_desc=subject,
-                            seed=character_seed(str(story.id), PICTURE_CHARACTER),
+                            name=source.name if source else "",
+                            species=source.species if source else "",
+                            # The character's own look is what the picture check looks for.
+                            visual_desc=source.visual if source else subject,
+                            seed=source.seed + BORROWED_SEED_OFFSET
+                            if source
+                            else character_seed(str(story.id), PICTURE_CHARACTER),
+                            ref_image_key=reference,
                         ),
                         SceneRow(
                             story_id=story.id,
@@ -254,6 +304,54 @@ class StoryService:
         if self.on_enqueued is not None:
             self.on_enqueued()
         return accepted
+
+    async def _source_character(
+        self, owner_id: str, story_id: uuid.UUID, character_id: str | None
+    ) -> "SourceCharacter":
+        """A character of one of the caller's own ready stories, or CharacterNotFoundError (also for someone
+        else's story, like every story route)."""
+        async with self._sessions() as session:
+            story = await StoryRepository(session).get(story_id)
+            if story is None or story.owner_id != owner_id or story.status != StoryStatus.READY:
+                raise CharacterNotFoundError
+            characters = list(story.characters)
+            if character_id is None:
+                character = characters[0] if characters else None
+            else:
+                character = next((c for c in characters if c.char_key == character_id), None)
+            if character is None:
+                raise CharacterNotFoundError
+            # Page 1's picture is the reference when it is a real picture of this character.
+            scenes = sorted(story.scenes, key=lambda s: s.idx)
+            first = scenes[0] if scenes else None
+            reference = None
+            if (
+                first is not None
+                and first.image_status == ImageStatus.READY
+                and first.image_key
+                and (lead := main_character(first, characters)) is not None
+                and lead.char_key == character.char_key
+            ):
+                reference = first.image_key
+            return SourceCharacter(
+                name=character.name,
+                species=character.species,
+                visual=character.visual_desc,
+                seed=character.seed,
+                reference_key=reference,
+            )
+
+    async def _copy_reference(self, source: "SourceCharacter", picture_id: uuid.UUID) -> str | None:
+        """Copy the reference under the picture's own prefix; without it the picture still keeps the look."""
+        if source.reference_key is None or self.blobs is None:
+            return None
+        key = reference_image_key(picture_id)
+        try:
+            await self.blobs.put(key, await self.blobs.get(source.reference_key), PNG)
+        except BlobError as exc:
+            logger.warning("Could not copy a character's reference picture (%s); drawing without it.", exc)
+            return None
+        return key
 
     async def _check_input(self, prompt: str) -> SafetyVerdict:
         if self._input_guard is None:

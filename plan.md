@@ -635,7 +635,14 @@ Every version follows the **release process in §11**. Each version lists **buil
       daily GPU budget still caps everything. Frontend: a "A story / A picture" switch on the home form
       (`/api/pictures`). Measured locally: Whisper heard the smoke recording, its words were drawn and
       checked in 11 s (SD 1.5, CPU check); 7 new smoke checks (71 in all).
-- [ ] MCP: `illustrate`.
+- [x] MCP: `illustrate`. Done 20 Nov 2026: `illustrate(prompt, story_id?, character_id?)` over
+      `POST /v1/pictures`; it waits up to 2 min, then returns the picture as MCP image content plus a saved PNG
+      (downloaded with a separate client, so the API key never goes to the bucket). `character_ref` is
+      `story_id` + `character_id`: the API copies that character's look, a seed moved past its story's pages
+      (with page 1's own seed the picture copied page 1's layout), and copies page 1's picture under the
+      picture's prefix as `characters.ref_image_key`, the IP-Adapter reference (owner-only; 404 otherwise).
+      Measured locally through the real MCP protocol: a purple dragon and "Hedgie splashing in a puddle" from
+      a stored story, ~11-13 s each, the same hedgehog in a new scene.
 - [ ] **Start the synthetic data generator** (§7), running daily, quota-paced.
 
 **Carried over from V2** (deferred deliberately; see `docs/release-v2.md` for how each was found)

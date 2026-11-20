@@ -242,6 +242,7 @@ def build_services(settings: Settings, image_engine: SD15Local | None = None) ->
         services.stories.on_enqueued = services.worker.wake
         # Pictures ("draw a purple dragon") are image jobs, so they need the worker's image handler.
         services.stories.pictures_enabled = JobKind.IMAGE in handlers
+        services.stories.blobs = services.blobs
     return services
 
 

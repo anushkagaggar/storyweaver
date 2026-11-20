@@ -3,6 +3,8 @@
 The input guard, the generator and the storage are fakes; the worker, queue and API are real.
 """
 
+import dataclasses
+import hashlib
 import uuid
 from collections.abc import AsyncIterator, Iterator
 from typing import Any
@@ -12,18 +14,21 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from story_samples import make_planned_story
 from storyweaver.api.main import create_app
 from storyweaver.config import get_settings
 from storyweaver.imaging.params import GenerationParams
 from storyweaver.jobs.worker import Worker
+from storyweaver.llm.planner import PlannedStory
 from storyweaver.orchestrator.illustration_jobs import IllustrateSceneJob, ImageSettings, LocalIllustrator
-from storyweaver.orchestrator.story_service import PICTURE_CHARACTER, StoryService
+from storyweaver.orchestrator.story_service import BORROWED_SEED_OFFSET, PICTURE_CHARACTER, StoryService
 from storyweaver.routing.limits import VisitorLimiter
 from storyweaver.routing.store import InMemoryQuotaStore
 from storyweaver.safety.guards import BRANDS, SafetyVerdict
-from storyweaver.storage.blob import InMemoryBlobStore
+from storyweaver.storage.blob import InMemoryBlobStore, reference_image_key
 from storyweaver.storage.db import create_engine, create_session_factory
-from storyweaver.storage.models import JobKind, StoryRow
+from storyweaver.storage.models import ImageStatus, JobKind, StoryRow
+from storyweaver.storage.repositories import StoryRepository
 from user_tokens import ALICE, BOB, USER_TOKEN_SECRET, as_user
 
 pytestmark = pytest.mark.integration
@@ -52,9 +57,11 @@ class FakeGenerator:
 
     def __init__(self) -> None:
         self.calls: list[GenerationParams] = []
+        self.references: list[bytes | None] = []
 
     async def generate(self, params: GenerationParams, reference: bytes | None = None) -> bytes:
         self.calls.append(params)
+        self.references.append(reference)
         return PNG_BYTES
 
 
@@ -84,6 +91,7 @@ def client(
         services = test_client.app.state.services  # type: ignore[attr-defined]
         services.stories = StoryService(services.sessions, input_guard=guard, pictures_enabled=True)  # type: ignore[arg-type]
         services.blobs = blobs
+        services.stories.blobs = blobs
         yield test_client
 
 
@@ -206,3 +214,86 @@ def test_the_request_needs_the_api_key_and_a_prompt(client: TestClient) -> None:
     assert client.post("/v1/pictures", json={}, headers=API_KEY).status_code == 422
     assert client.post("/v1/pictures", json={"prompt": "a" * 301}, headers=API_KEY).status_code == 422
     assert uuid.UUID(client.post("/v1/pictures", json=DRAGON, headers=API_KEY).json()["story_id"])
+
+
+# --- character_ref: a character from one of the parent's own stories (MCP illustrate) ---
+
+PAGE_ONE = b"\x89PNG\r\n\x1a\npage-one-of-pip"
+
+
+async def _ready_story(db: Sessions, blobs: InMemoryBlobStore, owner: str = ALICE) -> uuid.UUID:
+    """A planned, READY story whose page 1 has a real picture (main character: pip)."""
+    plan = PlannedStory.model_validate(make_planned_story(5)).to_story(age_band="4-6", story_key="k")
+    async with db() as s, s.begin():
+        repo = StoryRepository(s)
+        row = await repo.create(prompt_text="a dragon", age_band="4-6", num_scenes=5, owner_id=owner)
+        await repo.save_plan(row, plan)
+        story_id = row.id
+    async with db() as s, s.begin():
+        scene = await StoryRepository(s).get_scene(story_id, 1)
+        assert scene is not None
+        scene.image_key = f"stories/{story_id}/images/page-one.png"
+        scene.image_status = ImageStatus.READY
+        await blobs.put(scene.image_key, PAGE_ONE, "image/png")
+    return story_id
+
+
+async def test_a_character_from_a_story_keeps_its_look_seed_and_page_one_reference(
+    client: TestClient, db: Sessions, blobs: InMemoryBlobStore, guard: StubGuard
+) -> None:
+    source = await _ready_story(db, blobs)
+    created = _draw(client, {"prompt": "draw Pip at the beach", "story_id": str(source)})
+    assert created.status_code == 202
+    picture_id = uuid.UUID(created.json()["story_id"])
+    assert guard.checked == ["Pip at the beach"]
+
+    async with db() as s:
+        source_row = await StoryRepository(s).get(source)
+        picture_row = await StoryRepository(s).get(picture_id)
+    assert source_row is not None and picture_row is not None
+    pip = next(c for c in source_row.characters if c.char_key == "pip")
+    (drawn,) = picture_row.characters
+    assert (drawn.visual_desc, drawn.name) == (pip.visual_desc, "Pip")
+    assert drawn.seed == pip.seed + BORROWED_SEED_OFFSET  # not page 1's seed: a new layout
+    assert drawn.ref_image_key == reference_image_key(picture_id)  # copied under the picture's own prefix
+    assert (await blobs.get(drawn.ref_image_key)) == PAGE_ONE
+
+    generator = FakeGenerator()
+    settings = dataclasses.replace(SETTINGS, reference_scale=0.4, reference_model="ip-adapter")
+    job = IllustrateSceneJob(db, blobs, settings, LocalIllustrator(generator, blobs))
+    assert await Worker(db, {JobKind.IMAGE: job}).run_once() is True
+    (params,) = generator.calls
+    assert generator.references == [PAGE_ONE]
+    assert params.reference_sha256 == hashlib.sha256(PAGE_ONE).hexdigest()
+    assert params.seed == pip.seed + BORROWED_SEED_OFFSET + 1
+    assert pip.visual_desc in params.prompt and params.prompt.endswith("Pip at the beach")
+
+
+async def test_another_character_gets_no_reference_from_a_page_it_isnt_on(
+    client: TestClient, db: Sessions, blobs: InMemoryBlobStore
+) -> None:
+    source = await _ready_story(db, blobs)
+    created = _draw(client, {"prompt": "draw Glow", "story_id": str(source), "character_id": "glow"})
+    assert created.status_code == 202
+    async with db() as s:
+        picture_row = await StoryRepository(s).get(uuid.UUID(created.json()["story_id"]))
+    assert picture_row is not None
+    (drawn,) = picture_row.characters
+    assert drawn.visual_desc == "tiny firefly with a soft golden glow" and drawn.ref_image_key is None
+
+
+async def test_characters_are_only_drawn_from_your_own_ready_stories(
+    client: TestClient, db: Sessions, blobs: InMemoryBlobStore
+) -> None:
+    source = await _ready_story(db, blobs, owner=BOB)
+
+    def code(body: dict[str, str]) -> tuple[int, str | None]:
+        response = _draw(client, {"prompt": "draw Pip", **body})
+        return response.status_code, response.json().get("code")
+
+    assert code({"story_id": str(source)}) == (404, "character_not_found")  # Bob's story, asked by Alice
+    assert code({"story_id": str(uuid.uuid4())}) == (404, "character_not_found")
+    assert code({"character_id": "pip"}) == (404, "character_not_found")  # no story_id
+    mine = await _ready_story(db, blobs)
+    assert code({"story_id": str(mine), "character_id": "nobody"}) == (404, "character_not_found")
+    assert await _story_count(db) == 2  # nothing was made

@@ -138,7 +138,14 @@ check "api/pictures signed out -> 401"  "sign_in_required|None" "$(picture 'sw_s
 check "api/pictures nothing to draw -> 422" "nothing_to_draw|None" "$(picture "$BOB" 'draw me please' | problem window)"
 check "api/pictures unsafe -> 422"      "unsafe_input|urls" "$(picture "$BOB" 'draw www.example.com' | problem category)"
 # A real picture: Prompt Guard + safeguard (2 small Groq calls), then the worker draws it on the local GPU.
-drawn=$(picture "$BOB" 'Can you draw me a purple dragon, please?')
+# The safety model allows a couple of requests a minute: if it is busy (429 + Retry-After), wait and ask once more.
+draw_dragon() { curl -s -m 60 -D "$TMP_HEADERS" -X POST $WEB/api/pictures -H 'Content-Type: application/json' -H "Cookie: $BOB" -d '{"prompt":"Can you draw me a purple dragon, please?"}'; }
+TMP_HEADERS=$(mktemp)
+drawn=$(draw_dragon)
+if grep -qi '^HTTP/[0-9.]* 429' "$TMP_HEADERS"; then
+  wait_s=$(grep -i '^retry-after:' "$TMP_HEADERS" | tr -dc '0-9'); sleep $(( ${wait_s:-30} + 1 )); drawn=$(draw_dragon)
+fi
+rm -f "$TMP_HEADERS"
 PIC=$(echo "$drawn" | python -I -c 'import json,sys;print(json.load(sys.stdin).get("story_id",""))' 2>/dev/null)
 pic_state=""
 for _ in $(seq 1 60); do

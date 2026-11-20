@@ -30,14 +30,14 @@ _text = text_of
 
 
 async def test_lists_tools_resources_and_prompt() -> None:
-    """V1 tools/resource/prompt plus the V2 additions (their behaviour is tested in test_speech.py)."""
+    """V1 tools/resource/prompt plus V2 (test_speech.py) and V3 (test_picture.py) additions."""
     async with connect() as session:
         tools = {tool.name for tool in (await session.list_tools()).tools}
         resources = [str(r.uri) for r in (await session.list_resources()).resources]
         templates = [t.uriTemplate for t in (await session.list_resource_templates()).resourceTemplates]
         prompts = [p.name for p in (await session.list_prompts()).prompts]
 
-        assert tools == {"create_story", "get_story", "get_job_status", "transcribe", "narrate"}
+        assert tools == {"create_story", "get_story", "get_job_status", "transcribe", "narrate", "illustrate"}
         assert resources == ["voices://list"]
         assert templates == ["story://{story_id}"]
         assert prompts == ["bedtime_story"]

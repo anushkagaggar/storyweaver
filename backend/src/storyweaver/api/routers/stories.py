@@ -35,6 +35,7 @@ from storyweaver.jobs.queue import JobQueue
 from storyweaver.orchestrator.story_deletion import StoryInProgressError
 from storyweaver.orchestrator.story_service import (
     AcceptedStory,
+    CharacterNotFoundError,
     IdempotencyConflictError,
     PicturesUnavailableError,
     SafetyUnavailableError,
@@ -75,6 +76,11 @@ class CreatePictureRequest(BaseModel):
 
     prompt: str = Field(
         min_length=3, max_length=300, description='What to draw, as said or typed: "draw a purple dragon".'
+    )
+    # character_ref: draw a character from one of your own stories ("Tilly at the beach").
+    story_id: uuid.UUID | None = Field(default=None, description="A story of yours whose character to draw.")
+    character_id: str | None = Field(
+        default=None, max_length=32, description="That story's character id; default: its first character."
     )
 
     @field_validator("prompt")
@@ -223,6 +229,7 @@ async def create_story(
     "/pictures",
     status_code=status.HTTP_202_ACCEPTED,
     responses={
+        404: {"description": "story_id/character_id names no character in a ready story of yours"},
         422: {"description": "Invalid body, nothing to draw, unsafe idea, or Idempotency-Key reused"},
         429: {"description": "Too many pictures, or safety-check quota reached; see Retry-After"},
         503: {"description": "Pictures or the safety check unavailable; see Retry-After"},
@@ -240,7 +247,11 @@ async def create_picture(
     """One picture from words like "draw a purple dragon". Read it with GET /v1/stories/{story_id}."""
     try:
         accepted = await stories.create_picture(
-            prompt=body.prompt, idempotency_key=idempotency_key, owner_id=owner
+            prompt=body.prompt,
+            idempotency_key=idempotency_key,
+            owner_id=owner,
+            story_id=body.story_id,
+            character_id=body.character_id,
         )
     except PicturesUnavailableError:
         return problem_response(
@@ -249,6 +260,13 @@ async def create_picture(
             "Pictures aren't available right now. Please try again later.",
             headers={"Retry-After": "300"},
             extra={"code": "pictures_unavailable"},
+        )
+    except CharacterNotFoundError:
+        return problem_response(
+            request,
+            status.HTTP_404_NOT_FOUND,
+            "We couldn't find that character in your stories.",
+            extra={"code": "character_not_found"},
         )
     except UnclearPictureError:
         return problem_response(

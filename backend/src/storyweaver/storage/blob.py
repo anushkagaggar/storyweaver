@@ -258,6 +258,14 @@ def image_key(story_id: object, digest: str) -> str:
     return f"{story_prefix(story_id)}images/{digest}.png"
 
 
+def reference_image_key(story_id: object) -> str:
+    """A picture's IP-Adapter reference, copied from its character's story (characters.ref_image_key).
+
+    Under the picture's own prefix, so deleting either the picture or the source story leaves the other whole.
+    """
+    return f"{story_prefix(story_id)}images/reference.png"
+
+
 def placeholder_image_key(story_id: object, idx: int) -> str:
     """Never under a content key: a scene that fell back once must still get its real image later."""
     return f"{story_prefix(story_id)}images/placeholder-{idx}.png"

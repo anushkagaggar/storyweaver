@@ -1,4 +1,4 @@
-"""StoryWeaver MCP server (plan §6.7, V1-V2): tools, resources and a prompt over the REST API.
+"""StoryWeaver MCP server (plan §6.7, V1-V3): tools, resources and a prompt over the REST API.
 
 Transport: stdio for Claude Desktop and the MCP Inspector (V1-V8); Streamable HTTP on the Space comes in V9.
 Run:  uv run server.py      Inspect:  uv run mcp dev server.py
@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.fastmcp import Context, FastMCP, Image
 from mcp.server.fastmcp.exceptions import ToolError
 from pydantic import Field
 
@@ -35,6 +35,35 @@ def default_audio_dir() -> Path:
     """Where `narrate` saves MP3s: STORYWEAVER_AUDIO_DIR, else a folder under the system temp directory."""
     configured = os.environ.get("STORYWEAVER_AUDIO_DIR", "").strip()
     return Path(configured).expanduser() if configured else Path(tempfile.gettempdir()) / "storyweaver-audio"
+
+
+def default_picture_dir() -> Path:
+    """Where `illustrate` saves pictures: STORYWEAVER_PICTURE_DIR, else a folder under the system temp dir."""
+    configured = os.environ.get("STORYWEAVER_PICTURE_DIR", "").strip()
+    return (
+        Path(configured).expanduser() if configured else Path(tempfile.gettempdir()) / "storyweaver-pictures"
+    )
+
+
+def save_png(directory: Path, png: bytes, story_id: str) -> Path:
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"picture-{story_id[:8]}.png"
+    path.write_bytes(png)
+    return path
+
+
+# How long `illustrate` waits for its picture before handing back the story id to check later. A picture
+# takes ~10 s on ZeroGPU (up to ~30 s with redraws), plus queueing behind a story's pages.
+PICTURE_WAIT_SECONDS = 120.0
+PICTURE_POLL_SECONDS = 2.0
+PICTURE_NOTES = {
+    "ready": "Here is the picture.",
+    "placeholder": (
+        "Today's drawing time has run out, so a soft placeholder stands in. Try again tomorrow for a real "
+        "picture."
+    ),
+    "failed": "The picture couldn't be drawn. Try a different idea.",
+}
 
 
 def save_mp3(directory: Path, mp3: bytes) -> Path:
@@ -75,6 +104,14 @@ def seconds_until(iso_time: str | None) -> int | None:
     return max(0, round((when - datetime.now(UTC)).total_seconds()))
 
 
+def _picture_status(story: dict[str, Any]) -> str:
+    """The picture page's image status: pending, ready, placeholder or failed."""
+    if story.get("status") == "failed":
+        return "failed"
+    scenes = story.get("scenes") or []
+    return str(scenes[0].get("image_status", "pending")) if scenes else "pending"
+
+
 def with_story_progress(story: dict[str, Any]) -> dict[str, Any]:
     status = str(story.get("status", ""))
     extra: dict[str, Any] = {"progress": STORY_PROGRESS.get(status, "Keep checking.")}
@@ -97,8 +134,14 @@ def with_job_progress(job: dict[str, Any]) -> dict[str, Any]:
     return {**job, "progress": note, "check_again_in_seconds": max(5, min(60, (wait or 0) + 5))}
 
 
-def make_server(client_factory: Any = None, audio_dir: Path | None = None) -> FastMCP:
-    """Build the server. `client_factory` and `audio_dir` (tests) override the env-var defaults."""
+def make_server(
+    client_factory: Any = None,
+    audio_dir: Path | None = None,
+    picture_dir: Path | None = None,
+    picture_wait_seconds: float = PICTURE_WAIT_SECONDS,
+    picture_poll_seconds: float = PICTURE_POLL_SECONDS,
+) -> FastMCP:
+    """Build the server. The keyword arguments (tests) override the env-var defaults and timings."""
 
     @asynccontextmanager
     async def lifespan(_: FastMCP) -> AsyncIterator[AppContext]:
@@ -118,7 +161,9 @@ def make_server(client_factory: Any = None, audio_dir: Path | None = None) -> Fa
             "Then read the story page by page and end with its moral. "
             "To turn a recording of the parent's voice into a story idea, call transcribe with the audio "
             "file's path, then pass the text to create_story. To hear any text read aloud, call narrate "
-            "(the voices://list resource lists the voices)."
+            "(the voices://list resource lists the voices). "
+            'To draw one picture ("draw a purple dragon"), call illustrate; to draw a character from one '
+            "of the parent's stories, pass that story's story_id (and the character's id from get_story)."
         ),
         lifespan=lifespan,
     )
@@ -195,6 +240,58 @@ def make_server(client_factory: Any = None, audio_dir: Path | None = None) -> Fa
             "voice": narrated.voice,
             "duration_seconds": narrated.duration_seconds,
         }
+
+    @mcp.tool(structured_output=False)
+    async def illustrate(
+        ctx: Context[Any, AppContext, Any],
+        prompt: Annotated[
+            str,
+            Field(
+                min_length=3,
+                max_length=300,
+                description='What to draw, as the child said it: "draw a purple dragon", "Pip at the beach".',
+            ),
+        ],
+        story_id: Annotated[
+            str | None,
+            Field(description="character_ref: a story of the parent's whose character to draw (get_story)."),
+        ] = None,
+        character_id: Annotated[
+            str | None,
+            Field(max_length=32, description="That story's character id; omit for its first character."),
+        ] = None,
+    ) -> list[Any]:
+        """Draw one gentle picture-book picture (text -> image) and show it. Takes 10-30 seconds; waits for
+        it. With story_id (and optionally character_id) it draws that story's character, keeping its look.
+        Returns the picture plus {story_id, title, image_status, picture_path, note}. If it isn't ready in
+        time, returns the story_id: call get_story later and open the page's image_url."""
+        api = api_of(ctx)
+        created = await call(api.create_picture(prompt, story_id, character_id))
+        picture_id = str(created["story_id"])
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + picture_wait_seconds
+        story = await call(api.get_story(picture_id))
+        while _picture_status(story) == "pending" and loop.time() < deadline:
+            await ctx.report_progress(min(0.95, 1 - (deadline - loop.time()) / picture_wait_seconds), 1.0)
+            await asyncio.sleep(picture_poll_seconds)
+            story = await call(api.get_story(picture_id))
+        status = _picture_status(story)
+        summary: dict[str, Any] = {
+            "story_id": picture_id,
+            "title": story.get("title"),
+            "image_status": status,
+        }
+        page = (story.get("scenes") or [{}])[0]
+        if status == "pending" or not page.get("image_url"):
+            summary["note"] = PICTURE_NOTES.get(status) or (
+                f"Still drawing. Call get_story with story_id {picture_id} in a little while."
+            )
+            summary["check_again_in_seconds"] = POLL_SECONDS
+            return [summary]
+        png = await call(api.download_picture(str(page["image_url"])))
+        path = await asyncio.to_thread(save_png, picture_dir or default_picture_dir(), png, picture_id)
+        summary.update(picture_path=str(path), picture_url=path.as_uri(), note=PICTURE_NOTES.get(status, ""))
+        return [summary, Image(data=png, format="png")]
 
     @mcp.resource("voices://list", mime_type="application/json")
     async def voices_resource() -> str:

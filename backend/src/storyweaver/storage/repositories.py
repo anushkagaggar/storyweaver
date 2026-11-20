@@ -36,8 +36,10 @@ class StoryRepository:
         adaptation: str | None = None,
         owner_id: str | None = None,
         kind: str = StoryKind.STORY,
+        story_id: uuid.UUID | None = None,
     ) -> StoryRow:
         row = StoryRow(
+            id=story_id or uuid.uuid4(),
             owner_id=owner_id,
             kind=kind,
             prompt_text=prompt_text,

@@ -43,7 +43,12 @@ FRIENDLY_CODES = {
     "unknown_voice",
     "tts_busy",
     "tts_unavailable",
+    "visitor_limit",
+    "nothing_to_draw",
+    "pictures_unavailable",
+    "character_not_found",
 }
+MAX_PICTURE_BYTES = 15 * 1024 * 1024  # an SDXL PNG is ~2 MB; anything far larger isn't ours
 
 
 @dataclass
@@ -188,6 +193,7 @@ async def read_audio_file(audio_path: str) -> tuple[bytes, str]:
 
 class StoryWeaverClient:
     def __init__(self, config: ApiConfig, transport: httpx.AsyncBaseTransport | None = None) -> None:
+        self._download_transport = transport
         self._http = httpx.AsyncClient(
             base_url=config.base_url,
             headers={"X-API-Key": config.api_key},
@@ -224,6 +230,32 @@ class StoryWeaverClient:
             # A fresh key per tool call: the API then de-duplicates transport-level retries of this call.
             headers={"Idempotency-Key": f"mcp-{uuid.uuid4()}"},
         )
+
+    async def create_picture(
+        self, prompt: str, story_id: str | None = None, character_id: str | None = None
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"prompt": prompt}
+        if story_id:
+            body["story_id"] = check_id(story_id, "story_id")
+        if character_id:
+            body["character_id"] = character_id
+        return await self._request(
+            "POST", "/v1/pictures", json=body, headers={"Idempotency-Key": f"mcp-{uuid.uuid4()}"}
+        )
+
+    async def download_picture(self, url: str) -> bytes:
+        """A page's picture from its presigned URL (object storage, not the API): a separate client, so the
+        API key never leaves for another host."""
+        try:
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(60.0), transport=self._download_transport
+            ) as http:
+                response = await http.get(url)
+        except httpx.TransportError as exc:
+            raise ApiError(503, "The picture couldn't be downloaded.") from exc
+        if not response.is_success or len(response.content) > MAX_PICTURE_BYTES:
+            raise ApiError(response.status_code, "The picture couldn't be downloaded.")
+        return response.content
 
     async def get_story(self, story_id: str) -> dict[str, Any]:
         return await self._request("GET", f"/v1/stories/{check_id(story_id, 'story_id')}")

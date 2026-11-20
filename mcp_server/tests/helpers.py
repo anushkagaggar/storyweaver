@@ -16,9 +16,12 @@ API = "http://api.test"
 
 
 @asynccontextmanager
-async def connect(audio_dir: Path | None = None) -> AsyncIterator[ClientSession]:
-    """Open the session in the test's own task: anyio task groups must exit where they began."""
-    server = make_server(lambda: StoryWeaverClient(ApiConfig(API, "test-key")), audio_dir=audio_dir)
+async def connect(audio_dir: Path | None = None, **options: Any) -> AsyncIterator[ClientSession]:
+    """Open the session in the test's own task: anyio task groups must exit where they began. `options` go to
+    make_server (picture_dir, picture_wait_seconds, picture_poll_seconds)."""
+    server = make_server(
+        lambda: StoryWeaverClient(ApiConfig(API, "test-key")), audio_dir=audio_dir, **options
+    )
     async with create_connected_server_and_client_session(server) as client_session:
         yield client_session
 

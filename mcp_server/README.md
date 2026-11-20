@@ -10,6 +10,7 @@ A thin MCP adapter over the StoryWeaver REST API (plan §6.7). It holds no busin
 | tool | `get_job_status(job_id)` | `GET /v1/jobs/{id}` |
 | tool | `transcribe(audio_path)` (V2) | `POST /v1/speech/transcribe` |
 | tool | `narrate(text, voice?)` (V2) | `POST /v1/speech/narrate` |
+| tool | `illustrate(prompt, story_id?, character_id?)` (V3) | `POST /v1/pictures`, then `GET /v1/stories/{id}` |
 | resource | `story://{story_id}` | `GET /v1/stories/{id}` |
 | resource | `voices://list` (V2) | `GET /v1/speech/voices` |
 | prompt | `bedtime_story(favourite_animal, theme)` | none |
@@ -25,6 +26,20 @@ A thin MCP adapter over the StoryWeaver REST API (plan §6.7). It holds no busin
   uses the narrator of whichever engine has quota (Orpheus, else Kokoro). An Orpheus voice with no quota left
   returns a "busy, try again in N seconds" error; it never silently switches voice.
 
+**Picture tool (V3)**
+
+- `illustrate` draws one picture-book picture from words like "draw a purple dragon" (the API takes out the
+  request words and runs the same safety checks as a story idea), **waits for it** (about 10-30 s; up to
+  2 minutes, then it returns the `story_id` to check later with `get_story`) and returns the picture itself
+  plus `{story_id, title, image_status, picture_path, note}`. The PNG is also saved on this computer, in
+  `STORYWEAVER_PICTURE_DIR` (default: `storyweaver-pictures` in the system temp folder).
+- `story_id` (+ optional `character_id`, from `get_story`'s characters) is the plan's `character_ref`: draw a
+  character from one of your stories ("Pip at the beach"). The API keeps its look, a seed near its own, and
+  uses the story's page-1 picture as the reference when that page shows it.
+- The picture is downloaded from its short-lived storage link with a separate HTTP client, so the API key is
+  never sent anywhere but the API. A picture is a one-page story: `get_story` reads it, and it expires with
+  the parent's stories.
+
 ## Configuration
 
 | Variable | Default | Notes |
@@ -32,6 +47,7 @@ A thin MCP adapter over the StoryWeaver REST API (plan §6.7). It holds no busin
 | `STORYWEAVER_API_URL` | `http://localhost:7860` | The local Docker API; the Space URL once V1 is deployed |
 | `STORYWEAVER_API_KEY` | (required) | The same key as the backend's `STORYWEAVER_API_KEY` |
 | `STORYWEAVER_AUDIO_DIR` | system temp / `storyweaver-audio` | Where `narrate` saves MP3s |
+| `STORYWEAVER_PICTURE_DIR` | system temp / `storyweaver-pictures` | Where `illustrate` saves PNGs |
 | `STORYWEAVER_ENV_FILE` | `mcp_server/.env`, then `../.env` | Where to read the two settings above from |
 
 **The API key and URL also fall back to a `.env` file**, so the repo-root `.env` (the one the Docker stack
