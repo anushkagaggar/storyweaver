@@ -580,7 +580,10 @@ Every version follows the **release process in §11**. Each version lists **buil
       Measured locally: 3.4–6.6 s a check; a real 5-page hedgehog story passed every page first time (SigLIP
       0.87–0.99), first picture 13 s after its text, all five 52 s after; a page without its character
       redrew twice (SigLIP 0.000) and kept the closest in 28 s. SD 1.5's foxes lost the green hat (SigLIP
-      0.05–0.36) but passed on the caption's "fox". Still to measure on ZeroGPU: the probe's three pages.
+      0.05–0.36) but passed on the caption's "fox". On ZeroGPU (test Space, `23a047f`, 20 Nov 2026): the
+      checker loads on the GPU at start-up in 8 s; SDXL draws in 3.1–3.9 s and a check takes 0.2–1.9 s
+      (fp16); pages 1 and 2 passed first time (SigLIP 0.997, 0.999) in 10.1 and 8.0 s end to end; the page
+      without its fox redrew twice (0.000) and kept the closest in 19.4 s, well inside the 45 s allowance.
 - [x] Pipeline ordering: scene 1 TTS and image first; the other scenes queued. Done 15 Nov 2026: one `image`
       job per scene, in its own worker lane (`plan`, `tts` and `image` lanes each claim only their kind).
 - [x] Content-addressed image cache. Done 15 Nov 2026, wider than planned: the key hashes *every* field of
