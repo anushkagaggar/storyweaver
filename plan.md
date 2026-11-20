@@ -554,7 +554,7 @@ Every version follows the **release process in §11**. Each version lists **buil
       on the CPU), 22 s to load; ~6 s once the whole model stays on the GPU (see character consistency).
       The model loads and warms up in the background 15 s after start-up. Every prompt starts with a fixed picture-book style (`imaging/params.py`): without it the
       planner's prompts came out as photographs. Weights fetch with retries (`python -m storyweaver.imaging.sd15`).
-- [ ] `SDXLZeroGPU` (`@spaces.GPU(duration=…)`). Code done 18 Nov 2026, not yet run on ZeroGPU:
+- [x] `SDXLZeroGPU` (`@spaces.GPU(duration=…)`). Code done 18 Nov 2026; run on ZeroGPU 20 Nov 2026 (below):
       `IMAGE_ENGINE=sdxl` (`imaging/sdxl.py`), SDXL base 1.0 pinned, 1152x896, fp16, IP-Adapter Plus SDXL
       (ViT-H) at the same 0.4, and SD 1.5's safety checker on every picture (SDXL has none). On ZeroGPU it
       loads at start-up, before `launch()`, and draws in `draw_on_gpu` (`imaging/gpu_drawing.py`,
@@ -590,7 +590,7 @@ Every version follows the **release process in §11**. Each version lists **buil
       delete are owner-only (404 otherwise); API-key-only callers (MCP, scripts) are a separate "operator" owner.
       Story limits count per owner. **Share links:** owner-made, read-only, stateless (HMAC), expire 15 min after
       creation and are never renewed; shared media URLs expire with the link. Sign-in is required.
-- [ ] **ZeroGPU from the worker (option b).** The worker calls the Space's own Gradio endpoint `illustrate`
+- [x] **ZeroGPU from the worker (option b).** The worker calls the Space's own Gradio endpoint `illustrate`
       over HTTP with an HF token (a new Space Secret), and the endpoint uploads the image before returning.
       Spike first: confirm ZeroGPU accepts a call from inside the Space through its `*.hf.space` URL.
       Built 18 Nov 2026 (`imaging/remote.py` client, `illustrate` endpoint, `GpuBudget` wired in), defaulting
@@ -601,6 +601,11 @@ Every version follows the **release process in §11**. Each version lists **buil
       To run it before the release: a temporary private ZeroGPU test Space without a database, deployed from
       `dev-v3` by a manual run of the deploy workflow (`space_id` input; production still only takes `v*`
       tags), checked with `backend/scripts/illustrate_probe.py` (self-call, then two SDXL pages).
+      **Run 20 Nov 2026** on the private test Space `gaggaranushka/storyweaver-test` (`76d0fb6`, no database):
+      the Space's self-call through its `*.hf.space` URL with HF_TOKEN reached `gpu_check` (HTTP 200, 3.2 s;
+      MIG slice of an RTX PRO 6000, torch 2.13.0, CUDA 13.0), so ZeroGPU accepts the worker's route; SDXL drew
+      page 1 and page 2 (page 1 as the IP-Adapter reference) in 7.9 s each, stored in B2 and cleaned up. The
+      same fox, hat and style on both pages. Still to see live: the full worker path with a database, at release.
 - [x] **Idle worker leaves Neon alone** (added 20 Nov 2026: Neon warned at 80 of 100 CU-hours). Each lane
       polled Postgres every 1 s, so the database never suspended. Now an idle lane sleeps until
       `Worker.wake()` (after a story is enqueued, and after every finished job) or until its next deferred job
