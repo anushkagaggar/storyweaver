@@ -10,7 +10,7 @@ The old site keeps working against the new backend, because a call with no user 
 - [x] **MCP:** 47 tests pass. **Frontend:** lint, typecheck and 63 Vitest tests pass.
 - [x] **Smoke:** 71 of 71 pass against the rebuilt Docker stack.
 - [x] **Production config, tested on the test Space** `gaggaranushka/storyweaver-test` (20 Nov 2026): `IMAGE_ENGINE=sdxl` and `HF_TOKEN`, the worker calling its own Space's `illustrate` route, and SDXL with the picture check on ZeroGPU.
-- [ ] **Next.js security upgrade:** the user runs the install (`npx next upgrade`), then `npm run build`.
+- [x] **Next.js security upgrade:** `next` and `eslint-config-next` 16.4.6 (12 days old, a security exception to the two-week rule). The Windows install dropped `@emnapi/core` and `@emnapi/runtime` from the lock, which broke `npm ci` on Linux, so the lock was regenerated in `node:24-alpine`. Build and smoke (71/71) pass on 16.4.6.
 - [ ] **The V3 exit criteria** (plan §10). "First page ≤ 15 s locally" measured **21 s** on 21 Nov 2026. Text arrived at 8.1 s after one planner repair; the picture took 13 s: SD 1.5 at about 7.7 s plus the self-check on CPU at 5.5 s. The criterion needs a decision before release.
 - [ ] **Pause the test Space.**
 
