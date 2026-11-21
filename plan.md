@@ -689,7 +689,9 @@ Every version follows the **release process in §11**. Each version lists **buil
 **Learn:** diffusion, VRAM management, async orchestration, caching, GPU as a scarce resource.
 
 **Exit criteria:**
-- first page in ≤ 15 s locally;
+- first page in ≤ 15 s **on the ZeroGPU Space** (changed 21 Nov 2026 from "locally": production checks each
+  picture on the GPU, in under 2 s; the local stack runs that check on the CPU, ~5.5 s, and measured 21 s:
+  text 8.1 s after a planner repair, then SD 1.5 ~7.7 s + check 5.5 s. Measured live after the release);
 - the main character is recognisable in at least 4 of 5 scenes;
 - the placeholder fallback works.
 

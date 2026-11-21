@@ -11,7 +11,7 @@ The old site keeps working against the new backend, because a call with no user 
 - [x] **Smoke:** 71 of 71 pass against the rebuilt Docker stack.
 - [x] **Production config, tested on the test Space** `gaggaranushka/storyweaver-test` (20 Nov 2026): `IMAGE_ENGINE=sdxl` and `HF_TOKEN`, the worker calling its own Space's `illustrate` route, and SDXL with the picture check on ZeroGPU.
 - [x] **Next.js security upgrade:** `next` and `eslint-config-next` 16.4.6 (12 days old, a security exception to the two-week rule). The Windows install dropped `@emnapi/core` and `@emnapi/runtime` from the lock, which broke `npm ci` on Linux, so the lock was regenerated in `node:24-alpine`. Build and smoke (71/71) pass on 16.4.6.
-- [ ] **The V3 exit criteria** (plan §10). "First page ≤ 15 s locally" measured **21 s** on 21 Nov 2026. Text arrived at 8.1 s after one planner repair; the picture took 13 s: SD 1.5 at about 7.7 s plus the self-check on CPU at 5.5 s. The criterion needs a decision before release.
+- [x] **The V3 exit criteria** (plan §10). Locally the first page took **21 s** on 21 Nov 2026: text at 8.1 s after one planner repair, then the picture in 13 s (SD 1.5 at about 7.7 s plus the self-check on CPU at 5.5 s). Decided 21 Nov 2026: the "first page ≤ 15 s" criterion is measured on the ZeroGPU Space, where the check runs on the GPU. It is checked in step 4 below.
 - [ ] **Pause the test Space.**
 
 ## 2. HF Space settings (production `gaggaranushka/storyweaver`)
@@ -52,6 +52,7 @@ The OAuth consent screen can stay in "Testing" with your own account as a test u
    - `/health/ready` reports `database`, `redis` and `worker` OK.
    - `GET /v1/gpu-route-check` returns 200.
    - A story reaches `ready` with pictures. This is the full worker path with a database, seen live for the first time.
+   - **Exit criterion:** time the first page (text and picture). The target is ≤ 15 s.
 3. Merge `dev-v3` → `main` (pull request). Vercel deploys.
 4. **Verify the live site:**
    - sign in with Google;
