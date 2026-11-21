@@ -43,6 +43,7 @@ from storyweaver.orchestrator.story_service import (
     UnsafeInputError,
 )
 from storyweaver.routing.limits import LimitExceededError
+from storyweaver.routing.router import is_daily_wait
 from storyweaver.safety.guards import BRANDS
 from storyweaver.storage.blob import BlobError, BlobStore
 from storyweaver.storage.models import ImageStatus, SceneRow, SceneStatus, StoryRow, StoryStatus
@@ -307,12 +308,16 @@ def _creation_problem(request: Request, exc: Exception, limit_messages: dict[str
         )
     if isinstance(exc, SafetyUnavailableError):
         quota = "quota" in exc.reason or "rate limited" in exc.reason
+        if quota and is_daily_wait(exc.retry_after_seconds):
+            message = "We've made all the stories we can for today. Please come back tomorrow."
+        elif quota:
+            message = "Too many stories right now. Please try again shortly."
+        else:
+            message = "Story creation is temporarily unavailable. Please try again shortly."
         return problem_response(
             request,
             status.HTTP_429_TOO_MANY_REQUESTS if quota else status.HTTP_503_SERVICE_UNAVAILABLE,
-            "Too many stories right now. Please try again shortly."
-            if quota
-            else "Story creation is temporarily unavailable. Please try again shortly.",
+            message,
             headers={"Retry-After": str(max(1, round(exc.retry_after_seconds)))},
             extra={"code": "safety_check_unavailable"},
         )

@@ -74,6 +74,25 @@ def test_bad_requests_are_422(
 
 
 @pytest.mark.parametrize(
+    ("error", "code"),
+    [
+        (QuotaExhaustedError(retry_after_seconds=33), "tts_busy"),
+        (TTSRateLimitedError(12), "tts_busy"),
+        # Orpheus's daily budget (or Groq's own daily 429): hours away, so not "try again shortly".
+        (QuotaExhaustedError(retry_after_seconds=50_400), "tts_daily_limit"),
+        (TTSRateLimitedError(7200), "tts_daily_limit"),
+    ],
+)
+def test_used_up_for_today_is_told_apart_from_busy(
+    client: TestClient, auth_headers: dict[str, str], error: Exception, code: str
+) -> None:
+    client.app.state.services.narrator = FailingNarrator(error)  # type: ignore[attr-defined]
+    response = client.post(URL, json={"text": "Hi."}, headers=auth_headers)
+    assert response.status_code == 429 and response.json()["code"] == code
+    assert ("today" in response.json()["detail"]) == (code == "tts_daily_limit")
+
+
+@pytest.mark.parametrize(
     ("error", "status", "retry_after"),
     [
         (QuotaExhaustedError(retry_after_seconds=33), 429, "33"),

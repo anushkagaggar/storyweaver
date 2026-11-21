@@ -484,6 +484,15 @@ def test_guard_unavailable_fails_closed(
     assert response.json()["code"] == "safety_check_unavailable"
 
 
+def test_a_used_up_day_says_tomorrow(client: TestClient, input_guard: StubGuard) -> None:
+    input_guard.failures.append(QuotaExhaustedError(retry_after_seconds=50_400))
+
+    response = _create(client)
+
+    assert response.status_code == 429 and response.headers["Retry-After"] == "50400"
+    assert "tomorrow" in response.json()["detail"]
+
+
 def test_idempotent_replay_skips_the_guard(client: TestClient, input_guard: StubGuard) -> None:
     _create(client, key="key-abcdefgh")
     _create(client, key="key-abcdefgh")

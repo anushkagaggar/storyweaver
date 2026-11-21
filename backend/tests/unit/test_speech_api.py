@@ -127,6 +127,9 @@ def test_quota_exhausted_is_429_with_retry_after(
     assert response.headers["retry-after"] == "42"
     assert response.json()["code"] == "stt_busy"
 
+    stt.error = QuotaExhaustedError(retry_after_seconds=30_000)  # Whisper's daily audio seconds
+    assert _post(client, tone(2.0), auth_headers).json()["code"] == "stt_daily_limit"
+
 
 @pytest.mark.parametrize("error", [STTUnavailableError("down"), STTError("rejected")])
 def test_stt_failure_is_503(

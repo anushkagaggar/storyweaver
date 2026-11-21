@@ -83,12 +83,16 @@ class StoryPlanner:
         self._system_template = (_PROMPTS / "planner_system.md").read_text(encoding="utf-8")
         self._repair_template = (_PROMPTS / "planner_repair.md").read_text(encoding="utf-8")
 
-    async def plan(self, request: StoryRequest, *, story_key: str) -> PlanResult:
-        """Plan a story. `story_key` (e.g. the story id) makes character seeds deterministic."""
-        messages = [
+    def messages(self, request: StoryRequest) -> list[ChatMessage]:
+        """The planner's first-call prompt: also the input side of the synthetic SFT records (V6)."""
+        return [
             ChatMessage("system", self._system_prompt(request)),
             ChatMessage("user", self._idea_message(request)),
         ]
+
+    async def plan(self, request: StoryRequest, *, story_key: str) -> PlanResult:
+        """Plan a story. `story_key` (e.g. the story id) makes character seeds deterministic."""
+        messages = self.messages(request)
         first = await self._call(self._planner_model, messages)
         story, problems = self._evaluate(first.content, request, story_key)
         if story is not None and not problems:

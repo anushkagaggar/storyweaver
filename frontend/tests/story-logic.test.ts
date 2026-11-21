@@ -12,6 +12,7 @@ import {
   statusMessage,
   UUID_PATTERN,
   validatePrompt,
+  waitPhrase,
 } from "@/lib/story-logic";
 
 describe("pollDelayMs", () => {
@@ -65,6 +66,15 @@ describe("problemMessage", () => {
     expect(problemMessage({ status: 500 }, null)).toMatch(/Something went wrong/);
   });
 
+  it("says a used-up day in words, not in seconds", () => {
+    expect(problemMessage({ status: 429 }, 300)).toBe("The storyteller is busy right now. Please try again in about 5 minutes.");
+    expect(problemMessage({ status: 429 }, 50_400)).toBe("The storyteller is busy right now. Please try again in about 14 hours.");
+    const detail = "We've made all the stories we can for today. Please come back tomorrow.";
+    expect(problemMessage({ status: 429, code: "safety_check_unavailable", detail }, 50_400)).toBe(detail);
+    expect(waitPhrase(37)).toBe("37 seconds");
+    expect(waitPhrase(3600)).toBe("about 1 hour");
+  });
+
   it("shows the backend's own words for the per-visitor limit", () => {
     const detail = "That's all the stories for today. Please come back tomorrow for more.";
     expect(problemMessage({ status: 429, code: "visitor_limit", detail }, 3600)).toBe(detail);
@@ -91,7 +101,7 @@ describe("autoRetryDelaySeconds", () => {
   it("falls back to a default wait and caps long waits", () => {
     expect(autoRetryDelaySeconds(429, null, 0)).toBe(20);
     expect(autoRetryDelaySeconds(429, 0, 0)).toBe(20);
-    expect(autoRetryDelaySeconds(429, 3600, 0)).toBe(90);
+    expect(autoRetryDelaySeconds(429, 600, 0)).toBe(90);
   });
 
   it("never retries refused, invalid or failed requests", () => {
@@ -103,6 +113,11 @@ describe("autoRetryDelaySeconds", () => {
   it("gives up after the retry limit", () => {
     expect(autoRetryDelaySeconds(429, 10, MAX_AUTO_RETRIES - 1)).toBe(11);
     expect(autoRetryDelaySeconds(429, 10, MAX_AUTO_RETRIES)).toBeNull();
+  });
+
+  it("never retries a quota that is used up for today", () => {
+    expect(autoRetryDelaySeconds(429, 3600, 0)).toBeNull();
+    expect(autoRetryDelaySeconds(429, 50_400, 0, "safety_check_unavailable")).toBeNull();
   });
 
   it("never retries a visitor's own story limit, which is an hour or a day away", () => {

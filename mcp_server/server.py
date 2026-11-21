@@ -37,6 +37,16 @@ def default_audio_dir() -> Path:
     return Path(configured).expanduser() if configured else Path(tempfile.gettempdir()) / "storyweaver-audio"
 
 
+def wait_phrase(seconds: int) -> str:
+    """A Retry-After as words: a daily quota's ~14 h reads "about 14 hours", not "50400 seconds"."""
+    if seconds < 120:
+        return f"{seconds} seconds"
+    if seconds < 3600:
+        return f"about {round(seconds / 60)} minutes"
+    hours = round(seconds / 3600)
+    return "about 1 hour" if hours == 1 else f"about {hours} hours"
+
+
 def default_picture_dir() -> Path:
     """Where `illustrate` saves pictures: STORYWEAVER_PICTURE_DIR, else a folder under the system temp dir."""
     configured = os.environ.get("STORYWEAVER_PICTURE_DIR", "").strip()
@@ -175,7 +185,7 @@ def make_server(
         try:
             return await coro
         except ApiError as exc:
-            wait = f" Try again in {exc.retry_after_seconds} seconds." if exc.retry_after_seconds else ""
+            wait = f" Try again in {wait_phrase(exc.retry_after_seconds)}." if exc.retry_after_seconds else ""
             raise ToolError(f"{exc.message}{wait}") from exc
 
     @mcp.tool()

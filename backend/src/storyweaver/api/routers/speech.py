@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field, field_validator
 from storyweaver.api.deps import ServicesDep, require_api_key
 from storyweaver.api.errors import problem_response
 from storyweaver.orchestrator.narration import MAX_NARRATE_CHARS
-from storyweaver.routing.router import QuotaExhaustedError
+from storyweaver.routing.router import QuotaExhaustedError, is_daily_wait
 from storyweaver.speech.audio_utils import (
     ALLOWED_AUDIO_TYPES,
     MAX_AUDIO_BYTES,
@@ -49,8 +49,12 @@ MESSAGES = {
     "no_speech": "We couldn't make out any words. Please try again, speaking clearly.",
     "stt_unavailable": "Voice input isn't working right now. Please type your idea instead.",
     "stt_busy": "Voice input is busy right now. Please try again shortly, or type your idea.",
+    "stt_daily_limit": "Voice input has listened to all it can for today. Please type your idea instead.",
     "unknown_voice": "That voice isn't available.",
     "tts_busy": "That voice is busy right now. Please try again shortly, or choose another voice.",
+    # Orpheus's daily budget is about one story: hours away, so "shortly" would be wrong (V2 follow-up).
+    "tts_daily_limit": "That voice has read all it can for today. Please choose another voice, or try it "
+    "again tomorrow.",
     "tts_unavailable": "Reading aloud isn't working right now. Please try again later.",
 }
 
@@ -135,7 +139,7 @@ async def transcribe(request: Request, services: ServicesDep) -> Any:
         return _problem(
             request,
             status.HTTP_429_TOO_MANY_REQUESTS,
-            "stt_busy",
+            "stt_daily_limit" if exc.daily else "stt_busy",
             headers={"Retry-After": str(max(1, round(exc.retry_after_seconds)))},
         )
     except STTUnavailableError as exc:
@@ -236,13 +240,11 @@ async def narrate(body: NarrateIn, request: Request, services: ServicesDep) -> A
         return _problem(request, status.HTTP_503_SERVICE_UNAVAILABLE, "tts_unavailable", _retry_after(None))
     try:
         audio, voice_id = await services.narrator.narrate_text(body.text, body.voice)
-    except QuotaExhaustedError as exc:
+    except (QuotaExhaustedError, TTSRateLimitedError) as exc:
+        # Groq's own 429 for a used-up day carries the same hours-long Retry-After as our daily window.
+        code = "tts_daily_limit" if is_daily_wait(exc.retry_after_seconds) else "tts_busy"
         return _problem(
-            request, status.HTTP_429_TOO_MANY_REQUESTS, "tts_busy", _retry_after(exc.retry_after_seconds)
-        )
-    except TTSRateLimitedError as exc:
-        return _problem(
-            request, status.HTTP_429_TOO_MANY_REQUESTS, "tts_busy", _retry_after(exc.retry_after_seconds)
+            request, status.HTTP_429_TOO_MANY_REQUESTS, code, _retry_after(exc.retry_after_seconds)
         )
     except TTSUnavailableError as exc:
         logger.warning("Text-to-speech unavailable: %s", exc)

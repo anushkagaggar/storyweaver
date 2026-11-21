@@ -643,7 +643,17 @@ Every version follows the **release process in §11**. Each version lists **buil
       picture's prefix as `characters.ref_image_key`, the IP-Adapter reference (owner-only; 404 otherwise).
       Measured locally through the real MCP protocol: a purple dragon and "Hedgie splashing in a puddle" from
       a stored story, ~11-13 s each, the same hedgehog in a new scene.
-- [ ] **Start the synthetic data generator** (§7), running daily, quota-paced.
+- [x] **Start the synthetic data generator** (§7), running daily, quota-paced. Done 21 Nov 2026:
+      `data_pipeline/flows/synth_generate.py` runs the backend's own `StoryPlanner` with gpt-oss-120b as
+      planner and repairer (no fallback model), so every kept record passed live validation; records are
+      chat pairs (the planner's exact prompt → story JSON), labelled synthetic with their teacher. Paced by
+      `RoutedLLM`/`ModelRouter` on the Space's Redis counters (`SYNTH_REDIS_URL`), with its own 120k-token
+      daily budget; per-minute waits happen inside the call, a daily wait stops the run. Resumable
+      (append + fsync per record; done ids from the files). Ideas: 31,500 hero × place × wish combinations
+      in a seeded order. Daily via Windows Task Scheduler for now (Prefect arrives with the V4 flows).
+      Measured live (6 records): ~2.9k tokens a story, ~8k with a repair (2 of 6: undeclared side
+      characters), so ~26 records a day: **5,000 take ~6 months on one teacher**, not 2–4 weeks; V6 adds a
+      second teacher or lowers the target. Data card: `docs/data-cards/synthetic-planner-sft.md`.
 
 **Carried over from V2** (deferred deliberately; see `docs/release-v2.md` for how each was found)
 - [x] **Make `TTS_ENGINE=auto` usable again.** Confirmed live 15 Nov 2026: a 5-scene story's audio was
@@ -662,9 +672,14 @@ Every version follows the **release process in §11**. Each version lists **buil
 - [x] **Pacing blocks the single worker.** Done 15 Nov 2026: one claim loop per job kind (worker lanes).
       They share one event loop, so they stay independent only while no handler blocks it; CPU work runs
       in threads and GPU work is an HTTP call. A test shows a plan job finishing while a tts job sleeps.
-- [ ] **Distinguish "quota exhausted" from "rate limited" in `tts_busy`.** A quota-exhausted narration reads
+- [x] **Distinguish "quota exhausted" from "rate limited" in `tts_busy`.** A quota-exhausted narration reads
       "try again shortly" next to a `Retry-After` of ~14 hours (correct for a daily window). The same wording
       will be needed when the ZeroGPU image quota runs out, so fix it alongside the V3 placeholder message.
+      Done 21 Nov 2026: a wait of an hour or more can only be a daily window (`is_daily_wait`), so narrate
+      answers `tts_daily_limit` ("That voice has read all it can for today…"), transcribe `stt_daily_limit`,
+      and a used-up safety check on story creation says "come back tomorrow"; the short-wait codes are
+      unchanged. The website no longer auto-retries a day-long wait and says waits in words ("about 14
+      hours", not "50400 seconds"); the MCP tools do the same. Pictures already say "for today" (placeholder).
 - [x] **Side characters who speak but aren't declared** (owl, fish, teacher) cause planner repairs. Done
       15 Nov 2026 as *guests*: up to 2 undeclared speakers, each in at most 2 scenes, with their own voice
       (`with_guest_voices`) but no fixed look; loose references ("Pip") resolve to the declared id first.

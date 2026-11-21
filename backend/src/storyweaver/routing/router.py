@@ -11,6 +11,14 @@ from storyweaver.routing.store import Blocked, QuotaStore, Reservation, Usage
 
 logger = logging.getLogger(__name__)
 
+# A wait this long can only come from a daily window (per-minute limits and 429 cool-downs clear within a
+# minute or two), so the answer is "for today", not "in a moment".
+DAILY_WAIT_SECONDS = 3600
+
+
+def is_daily_wait(seconds: float | None) -> bool:
+    return seconds is not None and seconds >= DAILY_WAIT_SECONDS
+
 
 @dataclass
 class QuotaExhaustedError(Exception):
@@ -18,6 +26,11 @@ class QuotaExhaustedError(Exception):
 
     retry_after_seconds: float
     reasons: list[str] = field(default_factory=list)
+
+    @property
+    def daily(self) -> bool:
+        """Used up for today (a daily window), rather than briefly rate limited."""
+        return is_daily_wait(self.retry_after_seconds)
 
     def __str__(self) -> str:
         return f"Quota exhausted; retry after {self.retry_after_seconds:.0f}s ({'; '.join(self.reasons)})"

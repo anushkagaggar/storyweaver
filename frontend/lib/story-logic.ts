@@ -86,8 +86,22 @@ export function summaryLabel(summary: StorySummary): string {
 }
 
 /** Turn an API problem response into a sentence a parent can act on. */
+/** Retry-After at least this long comes from a daily window: "for today", not "in a moment" (backend is_daily_wait). */
+export const DAILY_WAIT_SECONDS = 3600;
+
+/** A wait as words: "37 seconds", "about 5 minutes", "about 14 hours". */
+export function waitPhrase(seconds: number): string {
+  if (seconds < 120) return `${seconds} seconds`;
+  if (seconds < DAILY_WAIT_SECONDS) return `about ${Math.round(seconds / 60)} minutes`;
+  const hours = Math.round(seconds / 3600);
+  return hours === 1 ? "about 1 hour" : `about ${hours} hours`;
+}
+
 export function problemMessage(problem: Problem, retryAfterSeconds: number | null): string {
-  const wait = retryAfterSeconds && retryAfterSeconds > 0 ? ` Please try again in ${retryAfterSeconds} seconds.` : "";
+  const wait = retryAfterSeconds && retryAfterSeconds > 0 ? ` Please try again in ${waitPhrase(retryAfterSeconds)}.` : "";
+  if (problem.status === 429 && retryAfterSeconds && retryAfterSeconds >= DAILY_WAIT_SECONDS && problem.detail) {
+    return problem.detail; // the backend's own "for today" sentence
+  }
   if (problem.code === "unsafe_input") {
     return problem.detail ?? "This story idea can't be used. Try a gentle, kind idea.";
   }
@@ -132,6 +146,8 @@ export function autoRetryDelaySeconds(
 ): number | null {
   if (status !== 429 && status !== 503) return null;
   if (code === "visitor_limit" || code === "pictures_unavailable") return null;
+  // Used up for today: retrying in 90 seconds can't help, so the parent decides.
+  if (retryAfterSeconds && retryAfterSeconds >= DAILY_WAIT_SECONDS) return null;
   if (retriesSoFar >= MAX_AUTO_RETRIES) return null;
   const wait = retryAfterSeconds && retryAfterSeconds > 0 ? retryAfterSeconds + 1 : DEFAULT_BUSY_WAIT_SECONDS;
   return Math.min(wait, MAX_BUSY_WAIT_SECONDS);

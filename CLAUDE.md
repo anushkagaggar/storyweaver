@@ -82,6 +82,6 @@ Pre-commit runs ruff, mypy (both as local hooks through `uv run`) and detect-sec
 
 - Get Gutenberg text only through the catalogue CSV, `/robot/harvest` or a mirror. Never scrape the site.
 - Scrapers must honour robots.txt and keep only PD/CC0 images.
-- Synthetic SFT generation (`data_pipeline/flows/synth_generate.py`) must be resumable and rate-limited with the same token-bucket code as the backend.
+- Synthetic SFT generation (`data_pipeline/flows/synth_generate.py`, started in V3) must be resumable and rate-limited with the same token-bucket code as the backend. It runs on the backend's venv and code from `backend/` (`uv run python ../data_pipeline/flows/synth_generate.py`; `--dry-run 5` makes no calls); its unit tests are `backend/tests/unit/test_synth_generate.py`. Set `SYNTH_REDIS_URL` to the Space's Upstash URL so it shares Groq counters with live stories. Data card: `docs/data-cards/synthetic-planner-sft.md`.
 - The local RTX 4050 has 6 GB of VRAM, so load one model at a time. SDXL LoRA and gpt-oss-20b training run on Colab or Kaggle, not locally.
 - Log every training run to MLflow with the DVC data hash, and checkpoint to the HF Hub every 100–200 steps.

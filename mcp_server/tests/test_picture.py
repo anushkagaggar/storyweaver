@@ -154,7 +154,7 @@ async def test_api_refusals_come_back_as_their_own_words() -> None:
 
     assert unclear.isError and "what to draw" in unclear.content[0].text  # type: ignore[union-attr]
     assert missing.isError and "couldn't find that character" in missing.content[0].text  # type: ignore[union-attr]
-    assert limited.isError and "Try again in 600 seconds" in limited.content[0].text  # type: ignore[union-attr]
+    assert limited.isError and "Try again in about 10 minutes" in limited.content[0].text  # type: ignore[union-attr]
 
 
 @respx.mock
