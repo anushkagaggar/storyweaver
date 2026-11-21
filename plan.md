@@ -692,6 +692,11 @@ Every version follows the **release process in §11**. Each version lists **buil
 - first page in ≤ 15 s **on the ZeroGPU Space** (changed 21 Nov 2026 from "locally": production checks each
   picture on the GPU, in under 2 s; the local stack runs that check on the CPU, ~5.5 s, and measured 21 s:
   text 8.1 s after a planner repair, then SD 1.5 ~7.7 s + check 5.5 s. Measured live after the release);
+  **Live 21 Nov 2026 (v3.0.0): 21.5 s, not met.** Text 10.2 s (a planner repair, ~5 s), page 1 drawn in 9.4 s
+  (the first GPU call; later pages 5.5 s, check 1.2-1.8 s on the GPU). Released anyway: it is latency, not
+  a defect. Follow-up (V4): draw page 1 as soon as its text exists instead of after the whole story's
+  output check, and cut planner repairs. Character: the same hedgehog on 5 of 5 SDXL pages (met);
+  placeholder: all 5 pages fell back when `IMAGE_ENGINE` was unset, story still finished (met);
 - the main character is recognisable in at least 4 of 5 scenes;
 - the placeholder fallback works.
 

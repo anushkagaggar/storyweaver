@@ -53,6 +53,14 @@ The OAuth consent screen can stay in "Testing" with your own account as a test u
    - `GET /v1/gpu-route-check` returns 200.
    - A story reaches `ready` with pictures. This is the full worker path with a database, seen live for the first time.
    - **Exit criterion:** time the first page (text and picture). The target is ≤ 15 s.
+
+   **Done 21 Nov 2026 (`v3.0.0`).** The first run made only placeholders: the Space had none of its three V3 settings (`IMAGE_ENGINE`, `HF_TOKEN`, `USER_TOKEN_SECRET`), so `IMAGE_ENGINE` defaulted to `placeholder`. After they were added:
+   - the GPU route returned 200 (0.75 s);
+   - a 5-page story drew real SDXL pictures, the same hedgehog on every page;
+   - the first page took 21.5 s, over the 15 s target (see plan.md V3 exit criteria);
+   - the text took 69 s on the first run, because Groq's safeguard model allows about 2 calls a minute (a V2-era limit).
+
+   Lesson: compare the Space's variable and secret *names* against this table before tagging. The HF API lists them without values.
 3. Merge `dev-v3` → `main` (pull request). Vercel deploys.
 4. **Verify the live site:**
    - sign in with Google;
