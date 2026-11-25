@@ -714,6 +714,12 @@ Every version follows the **release process in §11**. Each version lists **buil
       (`adapters/bge_embedder.py`: pinned revision, SHA-256-checked files, CPU, no torch). Unit-tested with
       fakes; the opt-in live test (`tests/live/test_embedder_live.py`) is for the real model.
 - [ ] Cleaning pipeline (§7), DVC tracking, data cards.
+      Cleaning code written 25 Nov 2026 (`data_pipeline/flows/clean.py`, 36 unit tests, mutation-checked):
+      steps 1 (Unicode, boilerplate, wrapped lines), 2 (English), 3 (near-duplicates; own MinHash + LSH
+      instead of `datasketch`, which would pull scipy into the Space's image), 4 (grade to age band:
+      FK ≤ 4 → "4-6", ≤ 7 → "7-9", else "10+"), 5 (word-list safety screen) and the scene split (80–150
+      words). Still to do: run it on real texts (needs the harvest), theme/moral tagging with gpt-oss-20b,
+      the gpt-oss-safeguard sample check, DVC tracking and the data card.
 - [x] Migration 0006: `tale_chunks`, `story_bibles`, HNSW and GIN indexes. Done 25 Nov 2026 with the
       `pgvector` dependency and `tests/integration/test_story_memory.py`; the integration tests pass against
       the local pgvector Postgres (496 unit + integration tests passed).
