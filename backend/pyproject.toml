@@ -35,6 +35,11 @@ dependencies = [
     # Story memory (V4): the `vector` column type for SQLAlchemy and the asyncpg codec that sends vectors.
     # The database extension itself is installed by migration 0006 (pgvector, PostgreSQL licence).
     "pgvector>=0.4",
+    # Embeddings (V4, adapters/bge_embedder.py): onnxruntime runs the bge-small ONNX model on CPU and
+    # tokenizers (Apache-2.0) splits text into word-pieces. Both already arrive through faster-whisper and
+    # kokoro-onnx; declared here because the embedder imports them directly.
+    "onnxruntime>=1.20",
+    "tokenizers>=0.21",
 ]
 
 [project.optional-dependencies]
@@ -102,6 +107,6 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = [
     "spaces", "spaces.*", "torch", "torch.*", "faster_whisper", "faster_whisper.*", "kokoro_onnx", "kokoro_onnx.*",
-    "diffusers", "diffusers.*", "transformers", "transformers.*",
+    "diffusers", "diffusers.*", "transformers", "transformers.*", "onnxruntime", "onnxruntime.*",
 ]
 ignore_missing_imports = true

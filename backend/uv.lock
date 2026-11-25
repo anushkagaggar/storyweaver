@@ -2033,6 +2033,7 @@ dependencies = [
     { name = "kokoro-onnx" },
     { name = "langfuse" },
     { name = "numpy" },
+    { name = "onnxruntime" },
     { name = "pgvector" },
     { name = "pillow" },
     { name = "pydantic-settings" },
@@ -2040,6 +2041,7 @@ dependencies = [
     { name = "redis" },
     { name = "spaces" },
     { name = "sqlalchemy", extra = ["asyncio"] },
+    { name = "tokenizers" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -2077,6 +2079,7 @@ requires-dist = [
     { name = "kokoro-onnx", specifier = ">=0.6" },
     { name = "langfuse", specifier = ">=4.15,<5" },
     { name = "numpy", specifier = ">=2.0" },
+    { name = "onnxruntime", specifier = ">=1.20" },
     { name = "pgvector", specifier = ">=0.4" },
     { name = "pillow", specifier = ">=11" },
     { name = "pydantic-settings", specifier = ">=2.15" },
@@ -2084,6 +2087,7 @@ requires-dist = [
     { name = "redis", specifier = ">=5.2" },
     { name = "spaces", specifier = ">=0.51" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
+    { name = "tokenizers", specifier = ">=0.21" },
     { name = "torch", marker = "extra == 'gpu'", specifier = "==2.13.0" },
     { name = "transformers", marker = "extra == 'gpu'", specifier = ">=4.56" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.54" },

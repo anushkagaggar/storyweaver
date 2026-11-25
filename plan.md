@@ -705,6 +705,14 @@ Every version follows the **release process in §11**. Each version lists **buil
 ### V4: Story Memory, the RAG pipeline (weeks 7–8)
 **Tasks**
 - [ ] Prefect OSS flows: Gutenberg (catalogue + harvest), Standard Ebooks, TinyStories.
+      Gutenberg catalogue step written 25 Nov 2026 (`data_pipeline/flows/gutenberg_catalogue.py`: cached,
+      conditional download, honours Retry-After, selects English children's tales; unit-tested, not yet run
+      against the live catalogue because the site was down for maintenance that day). Still to do: harvest
+      (fetch the texts via `/robot/harvest`), Standard Ebooks, TinyStories, and wrapping the steps in Prefect
+      (its own environment, not the backend's: Prefect's dependencies would clash with the Space's).
+- [x] Embedder: `Embedder` interface (`rag/embeddings.py`) and bge-small-en-v1.5 on onnxruntime
+      (`adapters/bge_embedder.py`: pinned revision, SHA-256-checked files, CPU, no torch). Unit-tested with
+      fakes; the opt-in live test (`tests/live/test_embedder_live.py`) is for the real model.
 - [ ] Cleaning pipeline (§7), DVC tracking, data cards.
 - [x] Migration 0006: `tale_chunks`, `story_bibles`, HNSW and GIN indexes. Done 25 Nov 2026 with the
       `pgvector` dependency and `tests/integration/test_story_memory.py`; the integration tests pass against
