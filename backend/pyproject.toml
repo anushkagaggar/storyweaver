@@ -32,6 +32,9 @@ dependencies = [
     "pillow>=11",
     # Verifies the signed-in user's token from the Vercel server (V3, auth/user_token.py).
     "pyjwt>=2.10",
+    # Story memory (V4): the `vector` column type for SQLAlchemy and the asyncpg codec that sends vectors.
+    # The database extension itself is installed by migration 0006 (pgvector, PostgreSQL licence).
+    "pgvector>=0.4",
 ]
 
 [project.optional-dependencies]

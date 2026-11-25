@@ -279,8 +279,10 @@ storyweaver/
 | `characters` | id, story_id FK, name, visual_desc, voice_id, seed, ref_image_key | story_id |
 | `scenes` | id, story_id FK, idx, text, image_prompt, image_key, audio_key, status | unique (story_id, idx) |
 | `jobs` | id, kind, story_id, status, attempts, last_error, payload_hash (unique), run_after | (status, run_after), payload_hash |
-| `tale_chunks` | id, tale_id, title, theme, moral, age_band, text, embedding vector(384), tsv tsvector | HNSW on embedding, GIN on tsv, btree on theme |
-| `story_bibles` | story_id PK, json, embedding vector(384) | — |
+| `tale_chunks` | id, source, tale_id, position, title, theme, moral, age_band, grade, licence, text, embedding vector(384), tsv tsvector (generated from `text`), created_at. Unique (tale_id, position) | HNSW (cosine) on embedding, GIN on tsv, btree on theme and age_band |
+| `story_bibles` | story_id PK (FK to stories, cascade), bible jsonb, embedding vector(384) null | — |
+
+(Written as migration `0006` on 25 Nov 2026: `0002`–`0005` were used by V1.1–V3. `source` and `licence` keep each chunk's lineage; `(tale_id, position)` makes reloading a tale idempotent.)
 
 **Migrations:** Alembic.
 - **Backward-compatible migrations only** (expand, then contract).
@@ -704,7 +706,9 @@ Every version follows the **release process in §11**. Each version lists **buil
 **Tasks**
 - [ ] Prefect OSS flows: Gutenberg (catalogue + harvest), Standard Ebooks, TinyStories.
 - [ ] Cleaning pipeline (§7), DVC tracking, data cards.
-- [ ] Migration 0002: `tale_chunks`, `story_bibles`, HNSW and GIN indexes.
+- [x] Migration 0006: `tale_chunks`, `story_bibles`, HNSW and GIN indexes. Done 25 Nov 2026 with the
+      `pgvector` dependency and `tests/integration/test_story_memory.py`; the integration tests pass against
+      the local pgvector Postgres (496 unit + integration tests passed).
 - [ ] Retriever: query understanding → hybrid search → RRF → re-rank → compression (§9).
 - [ ] Story bible written after planning; used by the planner and by `continue_story` later.
 - [ ] 50-query gold set; `evaluation/rag_eval.py`.

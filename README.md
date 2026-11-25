@@ -531,7 +531,7 @@ uv run ruff check . ; uv run ruff format --check . ; uv run mypy
 uv run pytest -m unit
 # integration: needs the Docker Postgres + Redis (the test DB name must end in _test; it is dropped and recreated)
 #   TEST_DATABASE_URL=postgresql+asyncpg://storyweaver:<password>@localhost:5432/storyweaver_test
-#   REDIS_URL=redis://localhost:6379/15
+#   TEST_REDIS_URL=redis://localhost:6379/15
 uv run pytest -m "unit or integration"
 # live (opt-in; uses real Groq quota)
 uv run pytest -m live tests/live -s
