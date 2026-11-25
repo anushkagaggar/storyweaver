@@ -2,6 +2,16 @@
 
 Illustrated Storybook: text and speech → pictures, sign-in, single pictures and MCP `illustrate`. Backend first, frontend second.
 
+**Status: released 21 Nov 2026.** Tag `v3.0.0` is commit `bcd3610` (the Space); `main` was fast-forwarded to `3daec0b` (Vercel), which adds only the live results below.
+
+| Exit criterion | Result |
+|---|---|
+| Main character recognisable in at least 4 of 5 scenes | **Met:** the same hedgehog on 5 of 5 SDXL pages |
+| Placeholder fallback works | **Met:** with `IMAGE_ENGINE` unset, all 5 pages fell back and the story still finished |
+| First page in ≤ 15 s on the ZeroGPU Space | **Not met:** 21.5 s (text 10.2 s including one planner repair, first GPU picture 9.4 s). Released anyway as a latency issue; the fix is the first V4 task |
+
+Also confirmed by the project owner after release: the step 4 live-site checks (sign-in, voice story with pictures, "a purple dragon", share link opened signed out, delete, `/status`) all worked, and the test Space is paused.
+
 The old site keeps working against the new backend, because a call with no user token is the "operator" owner. The new site, however, needs the V3 API.
 
 ## 1. Before tagging (local, done 21 Nov 2026 unless marked)
@@ -12,7 +22,7 @@ The old site keeps working against the new backend, because a call with no user 
 - [x] **Production config, tested on the test Space** `gaggaranushka/storyweaver-test` (20 Nov 2026): `IMAGE_ENGINE=sdxl` and `HF_TOKEN`, the worker calling its own Space's `illustrate` route, and SDXL with the picture check on ZeroGPU.
 - [x] **Next.js security upgrade:** `next` and `eslint-config-next` 16.4.6 (12 days old, a security exception to the two-week rule). The Windows install dropped `@emnapi/core` and `@emnapi/runtime` from the lock, which broke `npm ci` on Linux, so the lock was regenerated in `node:24-alpine`. Build and smoke (71/71) pass on 16.4.6.
 - [x] **The V3 exit criteria** (plan §10). Locally the first page took **21 s** on 21 Nov 2026: text at 8.1 s after one planner repair, then the picture in 13 s (SD 1.5 at about 7.7 s plus the self-check on CPU at 5.5 s). Decided 21 Nov 2026: the "first page ≤ 15 s" criterion is measured on the ZeroGPU Space, where the check runs on the GPU. It is checked in step 4 below.
-- [ ] **Pause the test Space.**
+- [x] **Pause the test Space.** Confirmed by the project owner.
 
 ## 2. HF Space settings (production `gaggaranushka/storyweaver`)
 
