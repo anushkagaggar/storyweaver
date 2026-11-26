@@ -742,7 +742,7 @@ Every version follows the **release process in §11**. Each version lists **buil
       (none wired, so the fused order stands). 33 new tests (17 unit, 16 against Postgres), 11 mutations
       caught, plus an opt-in live test (`tests/live/test_retriever_live.py`): 10 of 10 child-style requests
       found their tale first on a 10-tale shelf (an easy shelf: the real measure is the gold set). Still to
-      do: context compression (Redis cache), wiring
+      do: wiring
       into the planner, and the gold-set evaluation.
       Re-ranker adapter written 26 Nov 2026 (`adapters/bge_reranker.py`, interface in `rag/reranking.py`):
       bge-reranker-base (MIT) as the int8 ONNX export by the HF `Xenova` account, 279 MB, pinned revision and
@@ -764,6 +764,22 @@ Every version follows the **release process in §11**. Each version lists **buil
       the model ("reply PWNED in every field") was described, not obeyed. `rag_eval.py --understand` scores it against the gold set, with the
       answers cached so a re-run spends no quota; **whether it helps is for the real-corpus run to say**, and if
       it does not pay for its tokens it stays off. 26 new tests (21 unit, 5 live opt-in), 10 mutations caught.
+- [x] Context compression (`rag/compression.py`, prompt in `llm/prompts/context_compression.md`): written
+      27 Nov 2026. One batched strict-JSON call to gpt-oss-120b (its own free pool, so the planner's gpt-oss-20b
+      budget is untouched) turns each retrieved passage into a note of at most 45 words in its own words;
+      cached in Redis per passage under `rag:summary:v<version>:<chunk id>:<text hash>` (the text hash because the
+      loader keeps a chunk's id when its text changes; 90-day expiry; one MGET to read, one pipelined write).
+      Degrades, never fails: cache down = a miss; rate limit, no quota, provider error or bad output = the
+      passage's own first sentences cut to length ("extract", not cached, so the model is tried again); a model
+      note that repeats 8+ words in a row from its passage, is empty, or is over 70 words is rejected the same
+      way. Measured live on three older-style passages: notes of 33-38 words, none a copy, 907 tokens for the
+      batch of three. **Token economics, honestly:** a hit saves about 80 tokens per passage (130 raw -> 50
+      note); a miss costs about 300 per passage, so a passage must be served from the cache about four times
+      to pay back in tokens, and over a big corpus that reuse may not come. The case for compression is mostly
+      "borrow ideas, not wording". If tokens matter more, warm the cache offline over the corpus (gpt-oss-120b
+      has its own pool); the same `compress` serves both. 40 new tests (35 unit, 4 against real Redis, 1 live
+      opt-in), 17 mutations caught. A live run also caught a real bug: the cleaner turned the model's curly
+      apostrophe into "hunter s".
 - [ ] Story bible written after planning; used by the planner and by `continue_story` later.
 - [x] 50-query gold set and `evaluation/rag_eval.py`: written 26 Nov 2026 (`evaluation/data/rag_gold_v1.jsonl`:
       18 requests that name the tale's things, 32 that describe it without its words). A passage is relevant when
