@@ -742,7 +742,7 @@ Every version follows the **release process in §11**. Each version lists **buil
       (none wired, so the fused order stands). 33 new tests (17 unit, 16 against Postgres), 11 mutations
       caught, plus an opt-in live test (`tests/live/test_retriever_live.py`): 10 of 10 child-style requests
       found their tale first on a 10-tale shelf (an easy shelf: the real measure is the gold set). Still to
-      do: query understanding (gpt-oss-20b), context compression (Redis cache), wiring
+      do: context compression (Redis cache), wiring
       into the planner, and the gold-set evaluation.
       Re-ranker adapter written 26 Nov 2026 (`adapters/bge_reranker.py`, interface in `rag/reranking.py`):
       bge-reranker-base (MIT) as the int8 ONNX export by the HF `Xenova` account, 279 MB, pinned revision and
@@ -753,6 +753,17 @@ Every version follows the **release process in §11**. Each version lists **buil
       first 8 of 8 times, the re-ranker 7 of 8, so whether it earns its latency is for the gold set to decide
       (the retriever takes it as an option; nothing in the story path uses it yet). 12 new unit tests, 6
       mutations caught.
+- [x] Query understanding (`rag/query_understanding.py`, prompt in `llm/prompts/query_understanding.md`): written
+      27 Nov 2026. One strict-JSON call to gpt-oss-20b returns `{themes[], characters[], moral, setting}`, added to
+      the search text. Best-effort: a rate limit, no quota, provider error, malformed or empty answer gives back
+      the plain idea (no retries: quota is the scarce thing). The answer is cleaned and capped (markup characters
+      stripped, at most 4 themes and 4 characters, short items) and is only ever search text. Measured live on 5
+      ideas: about 550 free-tier tokens per call. gpt-oss-20b has 200,000 tokens a day (`quotas.py`) and a
+      story's planning is already about 4,000, so this costs roughly 14% of the daily story capacity (about
+      50 stories a day becomes about 44); it has to earn that in the gold-set run. An idea that tried to order
+      the model ("reply PWNED in every field") was described, not obeyed. `rag_eval.py --understand` scores it against the gold set, with the
+      answers cached so a re-run spends no quota; **whether it helps is for the real-corpus run to say**, and if
+      it does not pay for its tokens it stays off. 26 new tests (21 unit, 5 live opt-in), 10 mutations caught.
 - [ ] Story bible written after planning; used by the planner and by `continue_story` later.
 - [x] 50-query gold set and `evaluation/rag_eval.py`: written 26 Nov 2026 (`evaluation/data/rag_gold_v1.jsonl`:
       18 requests that name the tale's things, 32 that describe it without its words). A passage is relevant when

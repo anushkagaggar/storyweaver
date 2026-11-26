@@ -129,3 +129,25 @@ async def test_the_report_covers_the_run_end_to_end(factory: Any, tmp_path: Path
     rows = [json.loads(line) for line in (tmp_path / "r.jsonl").read_text(encoding="utf-8").splitlines()]
     assert {row["id"]: row["status"] for row in rows} == {"found": "judged", "absent": "not_in_corpus"}
     assert rows[0]["rank"] == {"plain": 1}
+
+
+async def test_a_prepared_query_is_searched_instead_of_the_request_as_written(factory: Any) -> None:
+    from storyweaver.rag.retriever import RetrievalQuery
+
+    gold = _gold(("missed", DRAGON, ["hedgehog"]))  # asked as written, the dragon passage is nearest
+    corpus = await ev.read_corpus(factory)
+    judgements = ev.judge(gold, corpus, "4-6")
+    retriever = HybridRetriever(session_factory=factory, embedder=FakeEmbedder())
+
+    as_written = await ev.evaluate("plain", retriever, judgements, age_band="4-6", k=1)
+    prepared = await ev.evaluate(
+        "enriched",
+        retriever,
+        judgements,
+        age_band="4-6",
+        k=1,
+        queries={"missed": RetrievalQuery(idea=HEDGEHOG)},  # as if understanding had pointed at the hedgehog
+    )
+
+    assert as_written.ranks == {"missed": None}
+    assert prepared.ranks == {"missed": 1}

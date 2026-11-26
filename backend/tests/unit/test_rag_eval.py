@@ -293,3 +293,95 @@ def test_a_malformed_gold_file_stops_the_run_before_any_connection(
 def test_the_default_gold_file_is_the_one_in_the_repo() -> None:
     assert ev.GOLD.name == "rag_gold_v1.jsonl" and ev.GOLD.is_file()
     assert re.fullmatch(r"q\d\d", GOLD[0].id)
+
+
+# ------------------------------------------------------------------------------- query understanding
+
+
+class FakeUnderstanding:
+    """Stands in for QueryUnderstanding: enriches requests containing 'dragon', fails for the rest."""
+
+    def __init__(self) -> None:
+        self.asked: list[str] = []
+
+    async def understand(self, idea: str) -> Any:
+        from storyweaver.rag.query_understanding import Understanding
+        from storyweaver.rag.retriever import RetrievalQuery
+
+        self.asked.append(idea)
+        if "dragon" in idea:
+            return Understanding(RetrievalQuery(idea=idea, themes=["courage"], moral="Be brave."), True, 400)
+        return Understanding(RetrievalQuery(idea=idea), False, 0, reason="LLMUnavailableError")
+
+
+def _judged(*requests: tuple[str, str]) -> list[Any]:
+    queries = ev.parse_gold([_line(qid, query=query) for qid, query in requests])
+    return ev.judge(queries, [_chunk(1, "t", "4-6", "wolf dragon")], "4-6")
+
+
+def test_the_understood_cache_round_trips_and_skips_damaged_lines(tmp_path: Path) -> None:
+    from storyweaver.rag.retriever import RetrievalQuery
+
+    path = tmp_path / "sub" / "cache.jsonl"
+    ev.append_understood_cache(
+        path, RetrievalQuery(idea="a dragon", themes=["courage"], characters=["dragon"])
+    )
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write("not json\n" + json.dumps({"idea": "half"}) + "\n")
+
+    cache = ev.read_understood_cache(path)
+
+    assert list(cache) == ["a dragon"]
+    assert list(cache["a dragon"].themes) == ["courage"] and cache["a dragon"].moral == ""
+    assert ev.read_understood_cache(tmp_path / "missing.jsonl") == {}
+
+
+async def test_understanding_asks_only_for_requests_not_cached_and_does_not_cache_failures(
+    tmp_path: Path,
+) -> None:
+    from storyweaver.rag.retriever import RetrievalQuery
+
+    cache = tmp_path / "cache.jsonl"
+    ev.append_understood_cache(cache, RetrievalQuery(idea="a dragon at night", themes=["night"]))
+    judgements = _judged(("a", "a dragon at night"), ("b", "a dragon in a cave"), ("c", "a wolf at the door"))
+    fake = FakeUnderstanding()
+
+    run = await ev.understand_requests(fake, judgements, cache)
+
+    assert fake.asked == ["a dragon in a cave", "a wolf at the door"]  # "a" came from the cache
+    assert run.asked == 2 and run.fell_back == 1 and run.tokens == 400
+    assert set(run.queries) == {"a", "b"}  # the failed request is searched as written
+    assert list(ev.read_understood_cache(cache)) == ["a dragon at night", "a dragon in a cave"]
+
+    again = FakeUnderstanding()
+    await ev.understand_requests(again, judgements, cache)
+    assert again.asked == ["a wolf at the door"]  # only the failure is retried
+
+
+async def test_requests_outside_the_corpus_are_never_sent_to_the_model(tmp_path: Path) -> None:
+    queries = ev.parse_gold([_line("x", query="a ship at sea", all_of=["xyzzy"])])
+    judgements = ev.judge(queries, [_chunk(1, "t", "4-6", "wolf")], "4-6")
+    fake = FakeUnderstanding()
+
+    run = await ev.understand_requests(fake, judgements, tmp_path / "c.jsonl")
+
+    assert fake.asked == [] and run.asked == 0 and run.queries == {}
+
+
+def test_the_report_shows_what_understanding_cost() -> None:
+    summary, _ = _report(10, 8)
+    run = ev.UnderstoodRun(asked=4, fell_back=1, tokens=1600)
+    run.queries = {f"q{i}": None for i in range(9)}
+    result = ev.ConfigResult("hybrid + query understanding")
+    result.note = run.note(10)
+
+    text = ev.render_summary(
+        ev.judge(ev.parse_gold([_line()]), [_chunk(1, "t", "4-6", "wolf")], "4-6"),
+        [result],
+        corpus=[_chunk(1, "t", "4-6", "wolf")],
+        age_band="4-6",
+        k=5,
+    )
+
+    assert "9 of 10 requests enriched" in text and "1,600 tokens" in text and "1 fell back" in text
+    assert summary  # the plain report has no notes section and still renders

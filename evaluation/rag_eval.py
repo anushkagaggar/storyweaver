@@ -37,7 +37,7 @@ import re
 import sys
 import time
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -46,18 +46,26 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend" / "src"))
 
+from groq import AsyncGroq  # noqa: E402
 from sqlalchemy import select  # noqa: E402
 
 from storyweaver.adapters.bge_embedder import BgeSmallEmbedder  # noqa: E402
 from storyweaver.adapters.bge_reranker import BgeReranker  # noqa: E402
+from storyweaver.adapters.groq_llm import GroqLLM  # noqa: E402
 from storyweaver.config import Settings  # noqa: E402
+from storyweaver.rag.query_understanding import QueryUnderstanding  # noqa: E402
 from storyweaver.rag.retriever import HybridRetriever, RetrievalQuery, bands_for  # noqa: E402
+from storyweaver.routing.llm import RoutedLLM  # noqa: E402
+from storyweaver.routing.router import ModelRouter  # noqa: E402
+from storyweaver.routing.store import InMemoryQuotaStore  # noqa: E402
 from storyweaver.storage.db import create_engine, create_session_factory  # noqa: E402
 from storyweaver.storage.models import TaleChunkRow  # noqa: E402
 
 GOLD = ROOT / "evaluation" / "data" / "rag_gold_v1.jsonl"
 RESULTS = ROOT / "evaluation" / "results" / "rag_eval_v1.jsonl"
 SUMMARY = ROOT / "evaluation" / "results" / "rag_eval_v1.md"
+UNDERSTOOD = ROOT / "evaluation" / "results" / "rag_understood_v1.jsonl"  # cache of Groq answers
+UNDERSTANDING_MODEL = "openai/gpt-oss-20b"
 TARGET = 0.8  # plan §10, V4 exit criterion: recall@5 >= 0.8
 KINDS = ("named", "described")
 TOO_LOOSE = 60  # a request matching more passages than this probably has a pattern that is too general
@@ -201,6 +209,7 @@ class ConfigResult:
     by_kind: dict[str, Score] = field(default_factory=dict)
     ranks: dict[str, int | None] = field(default_factory=dict)
     top: dict[str, list[str]] = field(default_factory=dict)  # query id -> "title: first words" of the top 3
+    note: str = ""
 
     def record(self, query: GoldQuery, rank: int | None, top: list[str]) -> None:
         self.overall.add(rank)
@@ -223,17 +232,108 @@ async def evaluate(
     *,
     age_band: str,
     k: int,
+    queries: Mapping[str, RetrievalQuery] | None = None,
 ) -> ConfigResult:
+    """Run every judged request through `retriever`. `queries` swaps in a prepared RetrievalQuery by request
+    id (for example one enriched by query understanding); a request without one is searched as written."""
     result = ConfigResult(name)
     started = time.perf_counter()
     for judgement in judgements:
         if judgement.status != "judged":
             continue
-        found = await retriever.search(RetrievalQuery(idea=judgement.query.query), age_band=age_band, limit=k)
+        query = (queries or {}).get(judgement.query.id) or RetrievalQuery(idea=judgement.query.query)
+        found = await retriever.search(query, age_band=age_band, limit=k)
         rank = first_relevant_rank([chunk.id for chunk in found], judgement.relevant, k)
         result.record(judgement.query, rank, [_gist(chunk) for chunk in found[:3]])
     result.seconds = time.perf_counter() - started
     return result
+
+
+# ------------------------------------------------------------------------- query understanding (optional)
+
+
+@dataclass
+class UnderstoodRun:
+    queries: dict[str, RetrievalQuery] = field(default_factory=dict)
+    asked: int = 0  # requests sent to the model this run (the ones not already cached)
+    fell_back: int = 0  # requests searched as written because the model could not help
+    tokens: int = 0  # free-tier tokens spent this run
+
+    def note(self, judged: int) -> str:
+        return (
+            f"query understanding by {UNDERSTANDING_MODEL}: "
+            f"{len(self.queries)} of {judged} requests enriched "
+            f"({self.asked} asked this run, {self.tokens:,} tokens; "
+            f"{self.fell_back} fell back to the request "
+            "as written and were not cached, so a re-run retries them)"
+        )
+
+
+def read_understood_cache(path: Path) -> dict[str, RetrievalQuery]:
+    """Earlier answers by request text. A line that cannot be read is ignored (the request is asked again)."""
+    cache: dict[str, RetrievalQuery] = {}
+    if not path.exists():
+        return cache
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            raw = json.loads(line)
+            cache[raw["idea"]] = RetrievalQuery(
+                idea=raw["idea"],
+                themes=list(raw["themes"]),
+                characters=list(raw["characters"]),
+                moral=raw["moral"],
+                setting=raw["setting"],
+            )
+        except (json.JSONDecodeError, KeyError, TypeError):
+            continue
+    return cache
+
+
+def append_understood_cache(path: Path, query: RetrievalQuery) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    row = {
+        "idea": query.idea,
+        "themes": list(query.themes),
+        "characters": list(query.characters),
+        "moral": query.moral,
+        "setting": query.setting,
+    }
+    with path.open("a", encoding="utf-8", newline="\n") as handle:
+        handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+async def understand_requests(
+    understanding: QueryUnderstanding, judgements: Sequence[Judgement], cache_path: Path
+) -> UnderstoodRun:
+    """Enrich every judged request, asking the model only for those not cached. Spends free-tier quota."""
+    cache = read_understood_cache(cache_path)
+    run = UnderstoodRun()
+    for judgement in judgements:
+        if judgement.status != "judged":
+            continue
+        text = judgement.query.query
+        if text in cache:
+            run.queries[judgement.query.id] = cache[text]
+            continue
+        outcome = await understanding.understand(text)
+        run.asked += 1
+        run.tokens += outcome.tokens
+        if outcome.understood:
+            run.queries[judgement.query.id] = outcome.query
+            append_understood_cache(cache_path, outcome.query)
+        else:
+            run.fell_back += 1
+    return run
+
+
+def groq_key() -> str:
+    key = os.environ.get("GROQ_API_KEY", "").strip()
+    env_file = ROOT / ".env"
+    if not key and env_file.exists():
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            if line.startswith("GROQ_API_KEY="):
+                key = line.split("=", 1)[1].strip()
+    return key
 
 
 async def read_corpus(factory: Any) -> list[CorpusChunk]:
@@ -299,6 +399,9 @@ def render_summary(
             f"| {result.overall.mrr:.2f} | {result.overall.first_place} "
             f"| {_percent(named)} | {_percent(described)} | {result.seconds:.0f} |"
         )
+    notes = [f"- **{result.name}:** {result.note}" for result in results if result.note]
+    if notes:
+        lines += ["", *notes]
     if default is not None:
         lines += ["", f"## Misses for {default.name!r}", ""]
         misses = [j for j in judgements if j.status == "judged" and default.ranks.get(j.query.id) is None]
@@ -375,6 +478,30 @@ async def run(args: argparse.Namespace, database_url: str) -> int:
         for name, retriever in setups:
             print(f"running: {name}")
             results.append(await evaluate(name, retriever, judgements, age_band=args.age_band, k=args.k))
+        if args.understand:
+            key = groq_key()
+            if not key:
+                print("--understand needs GROQ_API_KEY (environment or the repo's .env).")
+                return 2
+            client = AsyncGroq(api_key=key, max_retries=0, timeout=60.0)
+            llm = RoutedLLM(GroqLLM(client, reasoning_effort="low"), ModelRouter(InMemoryQuotaStore()))
+            try:
+                print("asking the model to understand the requests (cached answers are reused)")
+                prepared = await understand_requests(
+                    QueryUnderstanding(llm, model=UNDERSTANDING_MODEL), judgements, args.understood_cache
+                )
+            finally:
+                await client.close()
+            understood = await evaluate(
+                "hybrid + query understanding",
+                setups[0][1],
+                judgements,
+                age_band=args.age_band,
+                k=args.k,
+                queries=prepared.queries,
+            )
+            understood.note = prepared.note(understood.overall.judged)
+            results.append(understood)
     finally:
         await engine.dispose()
     summary = render_summary(judgements, results, corpus=corpus, age_band=args.age_band, k=args.k)
@@ -389,6 +516,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--database-url", default=None, help="default: DATABASE_URL from the environment")
     parser.add_argument("--embedder-dir", type=Path, default=None)
     parser.add_argument("--reranker-dir", type=Path, default=None, help="also evaluate with the re-ranker")
+    parser.add_argument(
+        "--understand",
+        action="store_true",
+        help="also evaluate query understanding (Groq gpt-oss-20b, once per judged request; answers cached)",
+    )
+    parser.add_argument("--understood-cache", type=Path, default=UNDERSTOOD)
     parser.add_argument("--age-band", default="4-6")
     parser.add_argument("--k", type=int, default=5)
     parser.add_argument("--gold", type=Path, default=GOLD)
