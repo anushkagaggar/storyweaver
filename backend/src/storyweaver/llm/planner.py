@@ -32,6 +32,9 @@ class StoryRequest:
     age_band: AgeBand = "4-6"
     num_scenes: SceneCount = 5
     adaptation: str | None = None  # "brands": the idea names brands or trademarked characters
+    context: str = (
+        ""  # labelled blocks put after the idea (retrieved inspiration, a story bible): rag/prompting.py
+    )
 
     @property
     def banned_name_words(self) -> frozenset[str]:
@@ -128,6 +131,8 @@ class StoryPlanner:
                 "\n\nThis idea names brands or trademarked characters. Keep its spirit, but invent original "
                 "characters: new names (not any name or word from the idea) and their own look."
             )
+        if request.context:
+            message += "\n\n" + request.context
         return message
 
     def _system_prompt(self, request: StoryRequest) -> str:
