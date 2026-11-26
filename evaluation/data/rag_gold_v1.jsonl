@@ -1,0 +1,50 @@
+{"id": "q01", "kind": "named", "query": "the wolf huffs and puffs and blows the house down", "all_of": ["huff", "puff", "house"]}
+{"id": "q02", "kind": "named", "query": "Cinderella loses her glass slipper at the prince's ball", "all_of": ["cinderella", "slipper"]}
+{"id": "q03", "kind": "named", "query": "the gingerbread man runs away from the fox", "all_of": ["gingerbread"]}
+{"id": "q04", "kind": "named", "query": "Hansel and Gretel find the witch's house made of bread and cake", "all_of": ["gretel", "witch"]}
+{"id": "q05", "kind": "named", "query": "the princess who feels a pea under twenty mattresses", "all_of": ["\\bpea\\b", "mattress"]}
+{"id": "q06", "kind": "named", "query": "the ugly duckling grows up into a swan", "all_of": ["duckling", "swan"]}
+{"id": "q07", "kind": "named", "query": "the little mermaid gives up her voice to get legs", "all_of": ["mermaid", "voice"]}
+{"id": "q08", "kind": "named", "query": "Rapunzel lets down her long hair from the tower", "all_of": ["rapunzel", "hair"]}
+{"id": "q09", "kind": "named", "query": "the emperor's new clothes that only wise people can see", "all_of": ["emperor", "clothes"]}
+{"id": "q10", "kind": "named", "query": "the tortoise and the hare have a race", "all_of": ["tortoise", "\\bhare\\b"]}
+{"id": "q11", "kind": "named", "query": "the shepherd boy who cried wolf", "all_of": ["shepherd", "wolf"]}
+{"id": "q12", "kind": "named", "query": "the lion spares the mouse and later the mouse sets him free", "all_of": ["\\blion\\b", "\\bmouse\\b"]}
+{"id": "q13", "kind": "named", "query": "the fox who says the grapes are probably sour", "all_of": ["\\bfox\\b", "grapes"]}
+{"id": "q14", "kind": "named", "query": "Goldilocks tries the three bears' porridge", "all_of": ["porridge", "\\bbears?\\b"]}
+{"id": "q15", "kind": "named", "query": "Little Red Riding Hood and the wolf in grandmother's bed", "all_of": ["\\bwolf\\b", "grandmother"]}
+{"id": "q16", "kind": "named", "query": "Jack climbs the beanstalk to the giant's castle", "all_of": ["beanstalk", "giant"]}
+{"id": "q17", "kind": "named", "query": "Snow White and the seven dwarfs", "all_of": ["snow.white", "dwarf"]}
+{"id": "q18", "kind": "named", "query": "Sleeping Beauty pricks her finger on a spindle", "all_of": ["spindle", "prick"]}
+{"id": "q19", "kind": "described", "query": "a musician rids a town of vermin, then takes the children away when he is not paid", "all_of": ["piper", "\\brats\\b"]}
+{"id": "q20", "kind": "described", "query": "a little man spins straw into gold for a queen who must guess his strange name", "all_of": ["rumpelstilt"]}
+{"id": "q21", "kind": "described", "query": "a slimy green creature fetches a princess's toy from deep water and wants to eat at her table", "all_of": ["\\bfrog\\b", "\\bwell\\b"]}
+{"id": "q22", "kind": "described", "query": "three hungry brothers want to reach the green hillside but something horrible lives under the wooden crossing", "all_of": ["troll", "bridge"]}
+{"id": "q23", "kind": "described", "query": "a poor child freezing on New Year's Eve burns her wares for warmth and sees lovely visions", "all_of": ["matches", "grandmother"]}
+{"id": "q24", "kind": "described", "query": "a toy with only one leg falls in love with a paper ballerina", "all_of": ["tin soldier", "dancer"]}
+{"id": "q25", "kind": "described", "query": "a girl no bigger than a thumb sleeps in a walnut shell", "all_of": ["thumbelina"]}
+{"id": "q26", "kind": "described", "query": "a small craftsman swats flies, becomes famous for it, then tricks two enormous brutes who throw stones", "all_of": ["tailor", "giant"]}
+{"id": "q27", "kind": "described", "query": "one insect works all summer while another plays music, and in winter the player begs for food", "all_of": ["\\bant\\b", "grasshopper"]}
+{"id": "q28", "kind": "described", "query": "an animal lies on the hay and will not let the oxen eat it", "all_of": ["manger", "\\bdog\\b"]}
+{"id": "q29", "kind": "described", "query": "a greedy farmer cuts open his bird to get all the treasure at once", "all_of": ["goose", "golden egg"]}
+{"id": "q30", "kind": "described", "query": "two cousins swap homes and the one from the fancy house is frightened by the quiet fields", "all_of": ["country mouse|town mouse"]}
+{"id": "q31", "kind": "described", "query": "two powers argue over who can make a man take off his coat", "all_of": ["wind", "\\bsun\\b", "cloak"]}
+{"id": "q32", "kind": "described", "query": "a naughty bunny sneaks into a farmer's vegetable garden and loses his jacket", "all_of": ["mcgregor"]}
+{"id": "q33", "kind": "described", "query": "a wooden puppet's nose grows when he tells fibs", "all_of": ["pinocchio"]}
+{"id": "q34", "kind": "described", "query": "a girl follows a hurrying creature in a waistcoat down a hole into a strange land", "all_of": ["alice", "\\brabbit\\b"]}
+{"id": "q35", "kind": "described", "query": "a farm girl is swept away by a storm and follows a yellow path to find a wizard", "all_of": ["dorothy", "scarecrow"]}
+{"id": "q36", "kind": "described", "query": "a boy who never grows up flies a girl and her brothers to a land of lost boys", "all_of": ["peter", "wendy"]}
+{"id": "q37", "kind": "described", "query": "a boy raised by animals in the jungle with a bear for a teacher and a panther as a friend", "all_of": ["mowgli", "baloo|bagheera"]}
+{"id": "q38", "kind": "described", "query": "why one big grey animal's nose stretched long after a snappy river creature pulled it", "all_of": ["elephant.s child", "crocodile"]}
+{"id": "q39", "kind": "described", "query": "a stuffed toy longs to become alive through a child's love", "all_of": ["velveteen"]}
+{"id": "q40", "kind": "described", "query": "an orphan girl sent to live with a grumpy old man high up in the Alps", "all_of": ["heidi", "\\bgoats?\\b"]}
+{"id": "q41", "kind": "described", "query": "an animal who loves boats and quiet riverbanks has a reckless friend obsessed with fast cars", "all_of": ["\\btoad\\b", "\\brat\\b"]}
+{"id": "q42", "kind": "described", "query": "a horse tells the story of his life and the people who owned him", "all_of": ["ginger", "merrylegs"]}
+{"id": "q43", "kind": "described", "query": "a poor boy finds an old light-giving object that brings forth a powerful spirit", "all_of": ["aladdin", "genie"]}
+{"id": "q44", "kind": "described", "query": "a woodcutter overhears robbers and opens a cave with magic words", "all_of": ["ali baba", "sesame"]}
+{"id": "q45", "kind": "described", "query": "a clever cat helps his poor master become rich and marry a princess", "all_of": ["\\bpuss\\b", "marquis|carabas"]}
+{"id": "q46", "kind": "described", "query": "a girl agrees to live in a castle with a frightening creature to save her father", "all_of": ["beast", "\\brose\\b"]}
+{"id": "q47", "kind": "described", "query": "a hen asks her friends for help baking bread and nobody volunteers", "all_of": ["wheat", "who will"]}
+{"id": "q48", "kind": "described", "query": "a silly bird thinks the world is ending when something small falls on her head", "all_of": ["henny.penny|chicken.little", "\\bsky\\b"]}
+{"id": "q49", "kind": "described", "query": "a greedy woman keeps wishing for bigger palaces from a magic fish", "all_of": ["fisherman", "flounder"]}
+{"id": "q50", "kind": "described", "query": "tiny helpers secretly make shoes at night for a poor craftsman", "all_of": ["shoemaker", "\\belves\\b"]}

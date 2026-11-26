@@ -754,7 +754,18 @@ Every version follows the **release process in §11**. Each version lists **buil
       (the retriever takes it as an option; nothing in the story path uses it yet). 12 new unit tests, 6
       mutations caught.
 - [ ] Story bible written after planning; used by the planner and by `continue_story` later.
-- [ ] 50-query gold set; `evaluation/rag_eval.py`.
+- [x] 50-query gold set and `evaluation/rag_eval.py`: written 26 Nov 2026 (`evaluation/data/rag_gold_v1.jsonl`:
+      18 requests that name the tale's things, 32 that describe it without its words). A passage is relevant when
+      its text matches every pattern the request lists, so the judgement does not depend on a book id, an
+      edition or how the corpus was chunked. A request whose tale is not in the corpus, or whose only matches
+      are in an age band the story may not use, is left out of the scores and listed (so a thin corpus gives an
+      INCONCLUSIVE verdict, not a flattering number). Scores recall@5 and MRR@5 for three setups: hybrid with one
+      passage per book (the story path), hybrid with up to five per book, and hybrid + re-ranker; this is where
+      the re-ranker earns its latency or not. Run once on the 10-tale live shelf with the real models to prove the
+      harness (7 of 50 requests in that corpus: INCONCLUSIVE, as it should be). 47 new tests, 8 mutations caught.
+      **Still to do: the real run**, which needs the harvested corpus. Note for that run: `tale_id` is a book, and
+      a Gutenberg anthology is one book, so "one passage per book" may hide a second tale from the same
+      collection; the "up to 5 per book" setup measures exactly that.
 - [ ] MCP: `search_tales`.
 
 **Learn:** legal data access, ETL, embeddings, hybrid retrieval, vector indexes, data versioning.
