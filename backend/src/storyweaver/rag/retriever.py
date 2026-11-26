@@ -12,9 +12,9 @@ their scores (cosine distances and ts_rank values are not on the same scale): a 
 each list it appears in, and the scores add up. A chunk found by both searches beats one found by one.
 
 Then: keep the best chunk of each tale (three chunks of the same story are not three ideas), optionally
-re-rank the best few with a cross-encoder (`Reranker`; none is wired in yet, so the fused order stands), and
-return the top few. Retrieval is an enhancement: callers should treat a failure as "no inspiration", never
-as "no story".
+re-rank the best few with a cross-encoder (`Reranker`; when it is missing or fails, the fused order
+stands), and return the top few. Retrieval is an enhancement: callers should treat a failure as
+"no inspiration", never as "no story".
 """
 
 import logging
@@ -22,12 +22,13 @@ import re
 import uuid
 from collections.abc import Hashable, Iterable, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Any, Protocol
+from typing import Any
 
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from storyweaver.rag.embeddings import Embedder
+from storyweaver.rag.reranking import Reranker, RerankError
 from storyweaver.storage.models import TaleChunkRow
 
 logger = logging.getLogger(__name__)
@@ -95,16 +96,6 @@ class RetrievedChunk:
     vector_rank: int | None = None  # 1-based place in the meaning search, if it was found there
     text_rank: int | None = None  # ... and in the word search
     rerank_score: float | None = field(default=None, compare=False)
-
-
-class Reranker(Protocol):
-    """A cross-encoder: reads the query and each passage together and scores how well they match."""
-
-    name: str
-
-    async def rerank(self, query: str, passages: Sequence[str]) -> list[float]:
-        """One score per passage, in order; higher is better."""
-        ...
 
 
 def reciprocal_rank_fusion[K: Hashable](
@@ -247,7 +238,11 @@ class HybridRetriever:
         ]
         candidates = one_per_tale(chunks, self._per_tale)[: max(self._fused_k, wanted)]
         if self._reranker is not None and len(candidates) > 1:
-            candidates = await self._rerank(self._reranker, search_text, candidates)
+            try:
+                candidates = await self._rerank(self._reranker, search_text, candidates)
+            except RerankError as exc:
+                # The fused order is a good answer on its own: losing the re-ranker must not lose the search.
+                logger.warning("Re-ranking skipped (%s): %s", self._reranker.name, exc)
         return candidates[:wanted]
 
     @staticmethod

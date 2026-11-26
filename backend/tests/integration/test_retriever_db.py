@@ -10,6 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from embedding_fakes import FakeEmbedder, fake_vector
+from storyweaver.rag.reranking import RerankUnavailableError
 from storyweaver.rag.retriever import HybridRetriever, RetrievalQuery
 from storyweaver.storage.db import create_engine, create_session_factory
 from storyweaver.storage.models import TaleChunkRow
@@ -203,6 +204,22 @@ async def test_a_reranker_that_miscounts_is_an_error(factory: Any) -> None:
     await _four_tales(factory)
     with pytest.raises(ValueError, match="number of scores"):
         await _retriever(factory, reranker=Broken()).search(RetrievalQuery(idea=SHIP), age_band="4-6")
+
+
+async def test_a_failing_reranker_leaves_the_fused_order_in_place(factory: Any) -> None:
+    class Down:
+        name = "down"
+
+        async def rerank(self, query: str, passages: Sequence[str]) -> list[float]:
+            raise RerankUnavailableError("model files missing")
+
+    await _four_tales(factory)
+
+    found = await _retriever(factory, reranker=Down()).search(RetrievalQuery(idea=SHIP), age_band="4-6")
+
+    assert found[0].tale_id == "gutenberg:ship"  # still the exact match, unscored by any reranker
+    assert found[0].rerank_score is None
+    assert len(found) == 3
 
 
 async def test_a_single_candidate_is_not_reranked(factory: Any) -> None:

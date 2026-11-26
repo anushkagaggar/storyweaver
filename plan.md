@@ -742,8 +742,17 @@ Every version follows the **release process in §11**. Each version lists **buil
       (none wired, so the fused order stands). 33 new tests (17 unit, 16 against Postgres), 11 mutations
       caught, plus an opt-in live test (`tests/live/test_retriever_live.py`): 10 of 10 child-style requests
       found their tale first on a 10-tale shelf (an easy shelf: the real measure is the gold set). Still to
-      do: query understanding (gpt-oss-20b), bge-reranker-base, context compression (Redis cache), wiring
+      do: query understanding (gpt-oss-20b), context compression (Redis cache), wiring
       into the planner, and the gold-set evaluation.
+      Re-ranker adapter written 26 Nov 2026 (`adapters/bge_reranker.py`, interface in `rag/reranking.py`):
+      bge-reranker-base (MIT) as the int8 ONNX export by the HF `Xenova` account, 279 MB, pinned revision and
+      SHA-256 checks, downloads on first use into `RERANKER_DIR`. int8 against the full-precision 1.1 GB file,
+      measured on the live shelf: the same rankings (7 of 8 first on a confusable shelf), 101 ms against
+      355 ms for 10 passages, so int8 it is. If it fails or its files are missing, the retriever keeps the
+      fused order. **Not switched on:** on that shelf the search by meaning alone already put the right tale
+      first 8 of 8 times, the re-ranker 7 of 8, so whether it earns its latency is for the gold set to decide
+      (the retriever takes it as an option; nothing in the story path uses it yet). 12 new unit tests, 6
+      mutations caught.
 - [ ] Story bible written after planning; used by the planner and by `continue_story` later.
 - [ ] 50-query gold set; `evaluation/rag_eval.py`.
 - [ ] MCP: `search_tales`.

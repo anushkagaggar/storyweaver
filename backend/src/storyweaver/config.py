@@ -83,6 +83,9 @@ class Settings(BaseSettings):
     # use, like Kokoro's files. It runs on the CPU, in batches of EMBEDDER_BATCH_SIZE texts.
     embedder_dir: Path = Path.home() / ".cache" / "storyweaver" / "bge-small"
     embedder_batch_size: int = Field(default=32, ge=1, le=256)
+    # Re-ranker (V4, adapters/bge_reranker.py): int8 ONNX, downloaded on first use.
+    reranker_dir: Path = Path.home() / ".cache" / "storyweaver" / "bge-reranker"
+    reranker_batch_size: int = Field(default=16, ge=1, le=128)
     # Object storage for narration audio (plan V2, ADR-0004): any S3-compatible store. SeaweedFS locally,
     # Backblaze B2 in production. Off unless the endpoint and both keys are set; stories then have no audio.
     s3_endpoint_url: str | None = None
