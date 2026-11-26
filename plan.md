@@ -708,8 +708,12 @@ Every version follows the **release process in §11**. Each version lists **buil
       Gutenberg catalogue step written 25 Nov 2026 (`data_pipeline/flows/gutenberg_catalogue.py`: cached,
       conditional download, honours Retry-After, selects English children's tales; unit-tested, not yet run
       against the live catalogue because the site was down for maintenance that day). Still to do: harvest
-      (fetch the texts via `/robot/harvest`), Standard Ebooks, TinyStories, and wrapping the steps in Prefect
-      (its own environment, not the backend's: Prefect's dependencies would clash with the Space's).
+      (fetch the texts via `/robot/harvest`), Standard Ebooks, TinyStories, and wrapping the steps in Prefect.
+      Decision (26 Nov 2026): Prefect goes in the backend as an optional `data` extra (like `gpu`), added
+      when the wrapper is written. It resolves with the backend's lock (checked: +46 packages, and
+      `websockets` 17.1 -> 16.1.1 in the shared lock). The deploy and CI exports only ask for `--extra gpu`, so
+      the extra stays out of the Space's requirements.txt, but the lock-wide `websockets` pin still applies:
+      re-run the smoke script and CI's Space-install check when it lands.
 - [x] Embedder: `Embedder` interface (`rag/embeddings.py`) and bge-small-en-v1.5 on onnxruntime
       (`adapters/bge_embedder.py`: pinned revision, SHA-256-checked files, CPU, no torch). Unit-tested with
       fakes; the opt-in live test (`tests/live/test_embedder_live.py`) is for the real model.
