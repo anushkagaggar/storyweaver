@@ -15,11 +15,8 @@ import os
 from pathlib import Path
 
 import pytest
-from alembic import command
 from sqlalchemy import select, text
-from sqlalchemy.engine import make_url
 
-from db_helpers import alembic_config
 from storyweaver.adapters.bge_embedder import BgeSmallEmbedder
 from storyweaver.rag.loader import load_chunks
 from storyweaver.storage.db import create_engine, create_session_factory
@@ -29,18 +26,6 @@ pytestmark = [
     pytest.mark.live,
     pytest.mark.skipif(not os.getenv("LIVE_LOCAL_EMBEDDER"), reason="LIVE_LOCAL_EMBEDDER not set"),
 ]
-
-
-@pytest.fixture
-def database_url() -> str:
-    """The throwaway `*_test` database, brought to the latest migration (it is not recreated here)."""
-    url = os.getenv("TEST_DATABASE_URL")
-    if not url:
-        pytest.skip("TEST_DATABASE_URL not set")
-    if not (make_url(url).database or "").endswith("_test"):
-        raise RuntimeError("TEST_DATABASE_URL must name a database ending in '_test'.")
-    command.upgrade(alembic_config(url), "head")
-    return url
 
 
 TALES = {

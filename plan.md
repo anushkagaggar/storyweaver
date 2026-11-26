@@ -736,6 +736,14 @@ Every version follows the **release process in §11**. Each version lists **buil
       no words with it. Not yet run on real Gutenberg chunks (no harvest yet). The table does not record which
       embedder made a vector: changing the embedder means a migration and a full reload.
 - [ ] Retriever: query understanding → hybrid search → RRF → re-rank → compression (§9).
+      Hybrid search written 26 Nov 2026 (`rag/retriever.py`): pgvector cosine top 20 + full-text top 20
+      (an OR of the query's content words), merged by RRF (k = 60), filtered by age band (a 4-6 story may
+      draw on "4-6" and "7-9" chunks, not "10+"), one chunk per tale, top 3; a `Reranker` slot is in place
+      (none wired, so the fused order stands). 33 new tests (17 unit, 16 against Postgres), 11 mutations
+      caught, plus an opt-in live test (`tests/live/test_retriever_live.py`): 10 of 10 child-style requests
+      found their tale first on a 10-tale shelf (an easy shelf: the real measure is the gold set). Still to
+      do: query understanding (gpt-oss-20b), bge-reranker-base, context compression (Redis cache), wiring
+      into the planner, and the gold-set evaluation.
 - [ ] Story bible written after planning; used by the planner and by `continue_story` later.
 - [ ] 50-query gold set; `evaluation/rag_eval.py`.
 - [ ] MCP: `search_tales`.
