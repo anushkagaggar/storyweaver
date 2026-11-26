@@ -727,6 +727,14 @@ Every version follows the **release process in §11**. Each version lists **buil
 - [x] Migration 0006: `tale_chunks`, `story_bibles`, HNSW and GIN indexes. Done 25 Nov 2026 with the
       `pgvector` dependency and `tests/integration/test_story_memory.py`; the integration tests pass against
       the local pgvector Postgres (496 unit + integration tests passed).
+- [x] Loader: `chunks.jsonl` → bge-small embeddings → `tale_chunks` (`rag/loader.py`, run with
+      `data_pipeline/flows/load_chunks.py`). Done 26 Nov 2026: idempotent upsert on (tale_id, position);
+      resumable (a chunk whose text is unchanged is never embedded again; a label-only change updates the row
+      without embedding); bad lines are counted and skipped (exit 5); `--prune` is opt-in and refused after
+      rejections or with `--limit`. 33 new tests (22 unit, 11 against Postgres), mutation-checked, plus an
+      opt-in live test (`tests/live/test_chunk_loader_live.py`) that found a dragon tale from a query sharing
+      no words with it. Not yet run on real Gutenberg chunks (no harvest yet). The table does not record which
+      embedder made a vector: changing the embedder means a migration and a full reload.
 - [ ] Retriever: query understanding → hybrid search → RRF → re-rank → compression (§9).
 - [ ] Story bible written after planning; used by the planner and by `continue_story` later.
 - [ ] 50-query gold set; `evaluation/rag_eval.py`.
